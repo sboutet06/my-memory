@@ -2,6 +2,11 @@
 raw/
 store/
 
+# Secrets
+.env
+.env.*
+!.env.example
+
 # Python
 venv/
 __pycache__/
@@ -18,3 +23,8 @@ __pycache__/
 .vscode/
 .idea/
 *.swp
+
+# Spike outputs (vector DBs, extracted graphs, logs)
+spikes/*/output/
+spikes/lightrag_out/
+lightrag.log
