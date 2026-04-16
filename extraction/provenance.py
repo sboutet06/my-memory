@@ -19,21 +19,20 @@ _UUID_RE = re.compile(
 )
 
 
-def extract_document_ids(file_path: str | None) -> list[str]:
-    """Parse one-or-more absolute paths separated by `<SEP>` into doc-ids.
+def extract_document_ids(text: str | None) -> list[str]:
+    """Parse any input text and return UUID doc-ids found under `store/…/`.
 
-    - Only UUIDv4 path segments under `/store/` qualify.
+    Handles both LightRAG's SEP-joined `file_path` fields and free-form
+    text (e.g. a query answer containing multiple `/store/{uuid}/…` refs).
+
+    - Only UUIDv4 segments directly under `store/` qualify.
     - Order preserved; first occurrence wins on dedup.
-    - Any non-conforming input yields an empty list (silent on noise).
     """
-    if not file_path:
+    if not text:
         return []
     seen: set[str] = set()
     out: list[str] = []
-    for part in file_path.split(SEP):
-        match = _UUID_RE.search(part)
-        if not match:
-            continue
+    for match in _UUID_RE.finditer(text):
         doc_id = match.group("doc_id")
         if doc_id not in seen:
             seen.add(doc_id)

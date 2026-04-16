@@ -23,6 +23,19 @@ def test_relative_path_still_matches() -> None:
     assert extract_document_ids(path) == ["5905ca2e-02d2-4063-b9e0-b3bcdf17ede9"]
 
 
+def test_free_text_with_multiple_refs() -> None:
+    """A query answer may cite several docs inline without SEP markers."""
+    answer = (
+        "The person appears in [1] /a/store/11111111-1111-4111-8111-111111111111/content.md "
+        "and [2] /b/store/22222222-2222-4222-8222-222222222222/content.md "
+        "and again [3] /c/store/11111111-1111-4111-8111-111111111111/content.md."
+    )
+    assert extract_document_ids(answer) == [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    ]
+
+
 def test_cross_doc_sep_concatenation() -> None:
     path = (
         "/a/b/store/11111111-1111-4111-8111-111111111111/content.md"
