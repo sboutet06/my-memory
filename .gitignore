@@ -28,3 +28,6 @@ __pycache__/
 spikes/*/output/
 spikes/lightrag_out/
 lightrag.log
+
+# Extraction store (KG data, auto-generated)
+extraction_store/
