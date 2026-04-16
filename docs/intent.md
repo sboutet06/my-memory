@@ -84,11 +84,30 @@ Starting with personal documents (invoices, bank statements, insurance, contract
 V0 scope strictly limited to ingestion module (Docling + local filesystem storage + metadata). Entity extraction, graph construction, and API come after V0 validation.
 
 ### V0 progress (2026-04-16)
-- End-to-end ingestion validated on 3 heterogeneous PDFs (1 office doc, 2 ID-type) + 1 unsupported format (`.pages`).
+- End-to-end ingestion validated on 9 heterogeneous PDFs (7 `rich` office docs: invoice, bank statement, insurance proposal, sale compromis, tax declarations/notices; 2 `degraded` ID-type: passport, identity card) + 2 unsupported formats (`.pages`, `.ods`).
 - Empirical sweep corrected an earlier assumption: **Docling does not skip OCR on ID-type PDFs** — the `ocrmac` plugin is auto-selected and text IS extracted. The failure mode is different: the layout analyzer wraps the whole page as a `picture` element, OCR'd text lands as children of that picture, and `export_to_markdown()` (which only walks the top-level body tree) emits just `<!-- image -->` placeholders.
 - Added an `ExtractionQuality` classification on metadata (`rich` / `degraded` / `empty`) computed from the DoclingDocument structure (top-level vs. nested text counts).
 - Added a fallback markdown renderer: on `degraded` docs, `content.md` is rebuilt from nested picture texts so the OCR output is actually usable.
 - Batch CLI now surfaces unsupported files explicitly (was silently filtered).
+
+### Layer 3 spike — LightRAG entity extraction (2026-04-16)
+Ran under `spikes/lightrag_extract.py`. Library-mode LightRAG, Google Gemini 2.5 Flash via OpenRouter (picked for perf/price + no hidden CoT = budget-predictable), local multilingual MiniLM embeddings (384-dim, sovereign/offline). No Neo4j — LightRAG's default file-backed store. Two passes:
+
+- **n=2 (1 rich + 1 degraded)**: 222 entities, 196 with edges. Passport entities surfaced cleanly despite `degraded` quality — **the V0 debt does not block Layer 3**.
+- **n=9 (full corpus)**: 795 entities, 649 with edges (82%), 146 isolated. Queries produced production-adjacent answers: 10 named people with roles and source docs, 20 organizations categorized by domain, full fiscal recap (revenus, avis d'imposition, composition foyer), full compromis-de-vente decomposition (diagnostics, servitudes, financement). Cross-document synthesis worked (same person identified across invoice, insurance proposal, passport, tax notice).
+
+Cost: ~$0.05-0.10 for the n=9 extraction. Affordable dogfooding.
+
+**Gaps observed** — all solvable in the wrapper layer, none blocking the architecture:
+1. 🔴 **No fact-level provenance on nodes/edges**. LightRAG tracks source at chunk level but the entity-relation tuples themselves carry no `source_doc_id` / `chunk_id`. This is the core V0 promise. Must be injected by wrapping LightRAG's insertion path.
+2. 🔴 **Entity type inflation**: 10 types at n=2 → 26 at n=9, with 6 singleton types invented ad-hoc (`lighting`, `creature`, `route`, `furniture`…). `concept` (215) + `data` (175) = 49% of entities — catch-all buckets swallow real signal. Fix: constrain taxonomy in extraction prompt (`person | organization | location | date | amount | document | concept`).
+3. ⚠️ **Fragmentation**: case/accent variants create duplicate nodes (`Les Adrets` vs `LES ADRETS`, `Système Ouvert` vs `Systeme Ouvert`). Needs a normalization step on entity names.
+4. ⚠️ **Noise entities**: line-item numeric fragments extracted as entities (`Value 1`, `1,40 Value`, `TVA Code 1`). Prompt tuning or min-degree filter.
+5. ⚠️ **LightRAG `pipmaster` auto-installs `openai`** on first run — supply-chain surprise. Pin `openai` in the venv and look for a flag to disable.
+
+**Decisions from the spike**:
+- LightRAG + Gemini 2.5 Flash + local multilingual embeddings is the validated Layer 3 stack.
+- The wrapper anticipated by intent.md (*"Wrapping LightRAG extraction to add custom provenance and versioning layer"*) is now concrete: inject provenance properties + constrain type vocabulary via the extraction prompt override. Both are the scope of the next phase.
 
 ## Validated technical decisions so far
 - Python 3.13 in venv

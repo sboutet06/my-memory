@@ -1,14 +1,14 @@
 """Layer 3 spike: entity extraction with LightRAG on V0-ingested docs.
 
 Goal: validate whether LightRAG produces useful entities/relationships
-from our `content.md` outputs, and answer the parked `degraded`-quality
-debt — are recovered OCR dumps good enough for the graph layer, or do
-they need a dedicated clean-up branch?
+from our `content.md` outputs, and observe how the gaps surfaced by the
+2-doc spike (fragmentation, noise entities, typing inconsistency) scale
+on the full ingested corpus.
 
 Setup:
 - LLM: Google Gemini 2.5 Flash via OpenRouter (OPEN_ROUTER_API_KEY).
 - Embeddings: local sentence-transformers multilingual MiniLM (384-dim).
-- Corpus: one `rich` invoice + one `degraded` passport.
+- Corpus: every document currently in `store/`.
 - Working dir: `spikes/lightrag_out/` (gitignored).
 
 Run: `python -m spikes.lightrag_extract`
@@ -37,29 +37,29 @@ LLM_MODEL = "google/gemini-2.5-flash"
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 EMBED_DIM = 384
 
-# (document_id prefix, human label) — full ids resolved at runtime.
-TARGETS: list[tuple[str, str]] = [
-    ("07818304", "invoice (rich)"),
-    ("555fbe67", "passport (degraded)"),
-]
-
 QUERIES = [
-    "Liste les personnes nommées dans les documents avec leur rôle.",
-    "Quels sont les montants ou dates mentionnés ?",
-    "Quelles organisations ou entreprises apparaissent ?",
+    "Liste les personnes nommées dans l'ensemble des documents avec leur rôle et le document qui les mentionne.",
+    "Quelles organisations ou entreprises apparaissent, et dans quels documents ?",
+    "Récapitule les informations fiscales disponibles (impôts, déclarations, montants).",
+    "Quels sont les documents relatifs à un bien immobilier ou un compromis de vente ?",
 ]
 
 logger = logging.getLogger("spike.lightrag")
 
 
-def resolve_doc_path(prefix: str) -> Path:
-    matches = [d for d in STORE.iterdir() if d.is_dir() and d.name.startswith(prefix)]
-    if len(matches) != 1:
-        raise SystemExit(f"Expected exactly 1 doc matching {prefix!r}, got {len(matches)}")
-    md = matches[0] / "content.md"
-    if not md.is_file():
-        raise SystemExit(f"Missing content.md in {matches[0]}")
-    return md
+def discover_store_docs() -> list[tuple[Path, dict]]:
+    """Return (content_md_path, metadata_dict) for every doc in store/."""
+    out: list[tuple[Path, dict]] = []
+    for entry in sorted(STORE.iterdir()):
+        if not entry.is_dir() or entry.name.startswith(".tmp-"):
+            continue
+        meta_path = entry / "metadata.json"
+        md_path = entry / "content.md"
+        if not (meta_path.is_file() and md_path.is_file()):
+            continue
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        out.append((md_path, meta))
+    return out
 
 
 async def llm_model_func(
@@ -111,32 +111,56 @@ async def build_rag() -> LightRAG:
 
 
 async def ingest_targets(rag: LightRAG) -> None:
-    for prefix, label in TARGETS:
-        md_path = resolve_doc_path(prefix)
+    docs = discover_store_docs()
+    if not docs:
+        raise SystemExit("No ingested docs found in store/")
+    texts, ids, file_paths = [], [], []
+    for md_path, meta in docs:
         text = md_path.read_text(encoding="utf-8")
-        logger.info("Inserting %s (%s, %d chars)", md_path.parent.name[:8], label, len(text))
-        await rag.ainsert(text, ids=[md_path.parent.name], file_paths=[str(md_path)])
+        logger.info(
+            "Queuing %s [%s] %s (%d chars)",
+            meta["document_id"][:8],
+            meta.get("extraction_quality", "?"),
+            meta["original_filename"],
+            len(text),
+        )
+        texts.append(text)
+        ids.append(meta["document_id"])
+        file_paths.append(str(md_path))
+    logger.info("Inserting %d documents into LightRAG", len(texts))
+    await rag.ainsert(texts, ids=ids, file_paths=file_paths)
 
 
-async def dump_graph_summary(rag: LightRAG) -> dict:
+async def dump_graph_summary(rag: LightRAG, top_n: int = 40) -> dict:
     kg = rag.chunk_entity_relation_graph
     labels = await kg.get_all_labels()
-    summary: dict = {"entity_count": len(labels), "entities": []}
+    rows = []
     for name in labels:
         node = await kg.get_node(name)
         if node is None:
             continue
         edges = await kg.get_node_edges(name) or []
-        summary["entities"].append(
+        rows.append(
             {
                 "name": name,
                 "type": node.get("entity_type"),
-                "description": (node.get("description") or "")[:200],
                 "degree": len(edges),
             }
         )
-    summary["entities"].sort(key=lambda e: e["degree"], reverse=True)
-    return summary
+    rows.sort(key=lambda e: e["degree"], reverse=True)
+
+    type_hist: dict[str, int] = {}
+    for r in rows:
+        type_hist[r["type"] or "null"] = type_hist.get(r["type"] or "null", 0) + 1
+
+    isolated = sum(1 for r in rows if r["degree"] == 0)
+    return {
+        "entity_count": len(rows),
+        "with_edges": len(rows) - isolated,
+        "isolated": isolated,
+        "type_histogram": dict(sorted(type_hist.items(), key=lambda kv: -kv[1])),
+        "top_entities": rows[:top_n],
+    }
 
 
 async def run_queries(rag: LightRAG) -> list[dict]:
