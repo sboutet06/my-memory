@@ -103,10 +103,66 @@ def test_birthdate_rejected_but_real_issue_date_picked() -> None:
     assert detect_document_date(text, "x.pdf") == date(2015, 6, 12)
 
 
-def test_only_scans_first_window() -> None:
-    """Dates deep in a huge doc shouldn't dominate; the header is what matters."""
-    # 10000 chars of noise, then a date.
-    padding = "lorem ipsum " * 1000
-    text = padding + "Émise le 03/02/2013."
-    # Should not find that date (out of window). No other date present.
+# -- French textual dates --------------------------------------------------
+
+def test_french_textual_date_with_month_name() -> None:
+    text = "Fait à Fayence le 22 avril 2016 par le notaire."
+    assert detect_document_date(text, "x.pdf") == date(2016, 4, 22)
+
+
+def test_french_textual_date_accented_month() -> None:
+    text = "Signé le 5 août 2008 à Nice."
+    assert detect_document_date(text, "x.pdf") == date(2008, 8, 5)
+
+
+def test_french_textual_date_unaccented_variant() -> None:
+    text = "Document emis le 1 fevrier 2019."
+    assert detect_document_date(text, "x.pdf") == date(2019, 2, 1)
+
+
+def test_french_textual_birthdate_still_rejected() -> None:
+    """`né le 24 novembre 1977` in textual form must also be rejected."""
+    text = "BOUTET né le 24 novembre 1977 à Blois."
+    assert detect_document_date(text, "x.pdf") is None
+
+
+# -- Max-date fallback (most-recent wins when no keyword anchors) ----------
+
+def test_undated_doc_picks_latest_nonbirthday_date() -> None:
+    """A contract body with scattered past-event dates: latest = issue date."""
+    text = (
+        "Les parties se sont rencontrées le 13 janvier 2006. Le diagnostic "
+        "amiante date du 22 avril 2016. Le 30 juin 2016 le compromis a été "
+        "régularisé."
+    )
+    assert detect_document_date(text, "x.pdf") == date(2016, 6, 30)
+
+
+def test_undated_doc_ignores_future_years_from_noise() -> None:
+    """Year-only year noise like '2019' must not slip through (no day+month)."""
+    text = "Rédigé en 2019. Le 15 mars 2016 quelque chose a eu lieu."
+    assert detect_document_date(text, "x.pdf") == date(2016, 3, 15)
+
+
+def test_ignores_date_buried_in_the_middle() -> None:
+    """Dates deep in the body (outside head + tail windows) must be ignored."""
+    # 7000 chars padding, date in the middle, 7000 more chars padding.
+    pad_front = "lorem ipsum " * 700
+    pad_back = "dolor sit amet " * 700
+    text = pad_front + "Émise le 03/02/2013." + pad_back
+    assert detect_document_date(text, "x.pdf") is None
+
+
+def test_keyword_anchored_date_in_footer_is_found() -> None:
+    """Legal docs sign at the bottom: `FAIT à X Le Y`."""
+    header = "Compromis de vente entre parties. " * 100  # ~3500 chars
+    middle = "Past event details. " * 200  # noise
+    footer = "FAIT à CHATEAUNEUF Le 13 mai 2016\nEn un seul exemplaire."
+    text = header + middle + footer
+    assert detect_document_date(text, "x.pdf") == date(2016, 5, 13)
+
+
+def test_marriage_date_is_disqualified() -> None:
+    """Marriage date must not be picked as document date."""
+    text = "Mariés à la mairie de MONTAUROUX le 5 juillet 2008."
     assert detect_document_date(text, "x.pdf") is None
