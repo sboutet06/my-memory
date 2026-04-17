@@ -5,6 +5,7 @@ import logging
 import time
 from pathlib import Path
 
+from ingestion.document_date import detect_document_date
 from ingestion.metadata import build_metadata, compute_sha256, detect_mime_type
 from ingestion.models import ExtractionQuality, IngestionResult, IngestionStatus
 from ingestion.quality import assess_quality, render_fallback_markdown
@@ -102,12 +103,15 @@ def ingest_document(
         if recovered:
             docling_md = recovered
 
+    document_date = detect_document_date(docling_md, file_path.name)
+
     metadata = build_metadata(
         source_path=file_path,
         content_hash=content_hash,
         mime_type=mime_type,
         processing_duration_ms=duration_ms,
         extraction_quality=quality,
+        document_date=document_date,
     )
 
     try:

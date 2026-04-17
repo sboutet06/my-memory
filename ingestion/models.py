@@ -1,7 +1,7 @@
 """Pydantic models for ingestion I/O and metadata schema."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Optional
@@ -40,6 +40,7 @@ class DocumentMetadata(BaseModel):
     processing_duration_ms: int = Field(ge=0)
     source_type: SourceType = SourceType.FILESYSTEM
     extraction_quality: ExtractionQuality = ExtractionQuality.RICH
+    document_date: Optional[date] = None
 
 
 class IngestionResult(BaseModel):

@@ -63,3 +63,19 @@ def test_missing_api_key_raises_on_access(monkeypatch: pytest.MonkeyPatch) -> No
     cfg = ExtractionConfig.from_env({})
     with pytest.raises(RuntimeError, match="OPEN_ROUTER_API_KEY"):
         cfg.require_api_key()
+
+
+def test_temporal_user_prompt_has_generic_default() -> None:
+    cfg = ExtractionConfig.from_env({})
+    prompt = cfg.temporal_user_prompt.lower()
+    # Generic time-varying categories — NOT specific to the personal-doc corpus.
+    assert "address" in prompt
+    assert "employer" in prompt
+    # No corpus-leak: no French-admin-specific terms.
+    forbidden = ["boutet", "montauroux", "roquefort", "mylène", "sébastien"]
+    assert not any(w in prompt for w in forbidden)
+
+
+def test_temporal_user_prompt_overridable() -> None:
+    cfg = ExtractionConfig.from_env({"EXTRACTION_TEMPORAL_USER_PROMPT": "Answer briefly."})
+    assert cfg.temporal_user_prompt == "Answer briefly."

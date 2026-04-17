@@ -28,6 +28,18 @@ _DEFAULT_EMBED_DIM = 384
 _DEFAULT_LANGUAGE = "auto"
 _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
+# Default guidance appended at query time. Generic over any time-varying
+# attribute so the graph can say something sensible about addresses,
+# employers, phones, vehicles, etc. — anything that may change over time.
+_DEFAULT_TEMPORAL_USER_PROMPT = (
+    "When listing facts that may change over time (addresses, employers, "
+    "phones, emails, spouses, vehicles, bank accounts), order them "
+    "chronologically from oldest to newest based on any document-date "
+    "context available, flag the most recent as current, and attach the "
+    "source date when known. If the chronology is ambiguous, say so "
+    "explicitly rather than guess."
+)
+
 
 def _parse_csv_list(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -41,6 +53,7 @@ class ExtractionConfig:
     language: str = _DEFAULT_LANGUAGE
     base_url: str = _DEFAULT_BASE_URL
     entity_types: list[str] = field(default_factory=lambda: list(_DEFAULT_ENTITY_TYPES))
+    temporal_user_prompt: str = _DEFAULT_TEMPORAL_USER_PROMPT
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ExtractionConfig":
@@ -55,6 +68,9 @@ class ExtractionConfig:
             language=env.get("EXTRACTION_LANGUAGE", _DEFAULT_LANGUAGE),
             base_url=env.get("EXTRACTION_BASE_URL", _DEFAULT_BASE_URL),
             entity_types=types,
+            temporal_user_prompt=env.get(
+                "EXTRACTION_TEMPORAL_USER_PROMPT", _DEFAULT_TEMPORAL_USER_PROMPT
+            ),
         )
 
     def addon_params(self) -> dict:

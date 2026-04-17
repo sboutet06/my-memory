@@ -5,7 +5,7 @@ import hashlib
 import logging
 import mimetypes
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -69,6 +69,7 @@ def build_metadata(
     mime_type: str,
     processing_duration_ms: int,
     extraction_quality: ExtractionQuality = ExtractionQuality.RICH,
+    document_date: date | None = None,
     document_id: str | None = None,
 ) -> DocumentMetadata:
     """Assemble a `DocumentMetadata` from measured inputs."""
@@ -84,4 +85,5 @@ def build_metadata(
         processing_duration_ms=processing_duration_ms,
         source_type=SourceType.FILESYSTEM,
         extraction_quality=extraction_quality,
+        document_date=document_date,
     )

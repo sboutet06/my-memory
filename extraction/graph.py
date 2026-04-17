@@ -56,6 +56,17 @@ def discover_store_docs(store_root: Path) -> list[tuple[Path, dict]]:
     return out
 
 
+def _prepend_date_header(text: str, document_date: str | None) -> str:
+    """Prefix the content with a `[DOCUMENT DATE: YYYY-MM-DD]` line when known.
+
+    The LLM then sees an explicit temporal anchor on every chunk and can
+    attach it to the facts it extracts. Skipped when the date is unknown.
+    """
+    if not document_date:
+        return text
+    return f"[DOCUMENT DATE: {document_date}]\n\n{text}"
+
+
 async def extract_documents(
     rag: LightRAG,
     docs: Iterable[tuple[Path, dict]],
@@ -63,13 +74,16 @@ async def extract_documents(
     """Insert the given docs into `rag`. Returns count inserted.
 
     Resolves each doc path to an absolute string so downstream
-    provenance parsing sees a canonical `/store/{doc_id}/` segment.
+    provenance parsing sees a canonical `/store/{doc_id}/` segment, and
+    prepends a document-date header when the ingestion metadata carries
+    one.
     """
     texts: list[str] = []
     ids: list[str] = []
     file_paths: list[str] = []
     for md_path, meta in docs:
-        texts.append(md_path.read_text(encoding="utf-8"))
+        raw = md_path.read_text(encoding="utf-8")
+        texts.append(_prepend_date_header(raw, meta.get("document_date")))
         ids.append(meta["document_id"])
         file_paths.append(str(md_path.resolve()))
     if not texts:
