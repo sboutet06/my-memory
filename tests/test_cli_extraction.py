@@ -63,3 +63,17 @@ def test_no_subcommand_errors() -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args([])
+
+
+def test_dedupe_is_a_subcommand() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["dedupe"])
+    assert args.cmd == "dedupe"
+    assert args.apply is False  # dry-run by default
+
+
+def test_dedupe_accepts_threshold_and_apply() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["dedupe", "--threshold", "0.9", "--apply"])
+    assert args.threshold == 0.9
+    assert args.apply is True

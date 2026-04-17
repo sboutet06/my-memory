@@ -12,6 +12,14 @@ from typing import Iterable
 
 from lightrag import LightRAG
 
+import numpy as np
+
+from extraction.alias import (
+    DEFAULT_CLUSTERABLE_TYPES,
+    DEFAULT_THRESHOLD,
+    cluster_entities,
+    pick_canonical,
+)
 from extraction.config import ExtractionConfig
 from extraction.llm import make_embedding_func, make_llm_func
 from extraction.provenance import rewrite_node_provenance
@@ -147,6 +155,81 @@ async def post_process(
         "nodes_rewritten": node_count,
         "edges_rewritten": edge_count,
         "entity_types_remapped": types_remapped,
+    }
+
+
+async def resolve_aliases(
+    rag: LightRAG,
+    config: ExtractionConfig,
+    *,
+    threshold: float = DEFAULT_THRESHOLD,
+    clusterable_types: Iterable[str] = DEFAULT_CLUSTERABLE_TYPES,
+    dry_run: bool = True,
+) -> dict:
+    """Cluster entities by name-embedding similarity and merge non-singletons.
+
+    Progressive + domain-agnostic: operates on whatever entities the graph
+    contains. Merges use LightRAG's native `amerge_entities`, which
+    re-points edges and unions provenance/source fields.
+    """
+    kg = rag.chunk_entity_relation_graph
+    labels = await kg.get_all_labels()
+    if not labels:
+        return {"entities": 0, "clusters": 0, "merged": 0, "plan": []}
+
+    types: list[str] = []
+    names: list[str] = []
+    for label in labels:
+        node = await kg.get_node(label)
+        if node is None:
+            continue
+        names.append(label)
+        types.append(node.get("entity_type") or "")
+
+    # Reuse the extraction embedding model — names are short, one batch.
+    embedding_func = make_embedding_func(config).func
+    raw = await embedding_func(names)
+    embeddings = np.asarray(raw, dtype=np.float32)
+    # `make_embedding_func` already requests `normalize_embeddings=True`,
+    # so `A @ A.T` is cosine similarity.
+
+    clusters = cluster_entities(
+        names, embeddings, types,
+        threshold=threshold,
+        clusterable_types=clusterable_types,
+    )
+
+    plan: list[dict] = []
+    merged = 0
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        canonical = pick_canonical(cluster)
+        sources = [n for n in cluster if n != canonical]
+        plan.append({"canonical": canonical, "merged_from": sources})
+        if not dry_run:
+            try:
+                await rag.amerge_entities(
+                    source_entities=sources,
+                    target_entity=canonical,
+                    merge_strategy={
+                        "description": "concatenate",
+                        "entity_type": "keep_first",
+                        "source_id": "join_unique",
+                        "file_path": "join_unique",
+                        "document_ids": "join_unique",
+                    },
+                )
+                merged += len(sources)
+            except Exception as exc:
+                logger.warning("merge failed: %s → %s: %s", sources, canonical, exc)
+
+    return {
+        "entities": len(names),
+        "clusters": len([c for c in clusters if len(c) > 1]),
+        "merged": merged,
+        "dry_run": dry_run,
+        "plan": plan,
     }
 
 

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from lightrag import QueryParam
 
 from extraction.config import ExtractionConfig
+from extraction.alias import DEFAULT_THRESHOLD
 from extraction.graph import (
     DEFAULT_WORKING_DIR,
     build_rag,
@@ -19,6 +20,7 @@ from extraction.graph import (
     extract_documents,
     graph_stats,
     post_process,
+    resolve_aliases,
 )
 from extraction.provenance import extract_document_ids
 
@@ -38,6 +40,23 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"LightRAG working directory (default: {DEFAULT_WORKING_DIR})",
     )
     p_extract.add_argument("-v", "--verbose", action="store_true")
+
+    p_dedupe = sub.add_parser(
+        "dedupe",
+        help="Cluster entities by name-embedding similarity and merge duplicates",
+    )
+    p_dedupe.add_argument(
+        "--working-dir", type=Path, default=DEFAULT_WORKING_DIR,
+    )
+    p_dedupe.add_argument(
+        "--threshold", type=float, default=DEFAULT_THRESHOLD,
+        help=f"Cosine similarity threshold (default: {DEFAULT_THRESHOLD})",
+    )
+    p_dedupe.add_argument(
+        "--apply", action="store_true",
+        help="Actually execute the merges (default: dry-run, print plan only)",
+    )
+    p_dedupe.add_argument("-v", "--verbose", action="store_true")
 
     p_query = sub.add_parser("query", help="Query the extracted knowledge graph")
     p_query.add_argument("question", type=str, help="Natural-language question")
@@ -87,6 +106,28 @@ async def _run_extract(store_root: Path, working_dir: Path) -> int:
             "language": config.language,
         },
     }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+async def _run_dedupe(working_dir: Path, threshold: float, apply: bool) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()  # fail fast; embedding stack reused from extraction
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        report = await resolve_aliases(
+            rag, config, threshold=threshold, dry_run=not apply,
+        )
+    finally:
+        await rag.finalize_storages()
+
+    # Compact per-cluster plan
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
@@ -148,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "extract":
         return asyncio.run(_run_extract(args.store, args.working_dir))
+    if args.cmd == "dedupe":
+        return asyncio.run(_run_dedupe(args.working_dir, args.threshold, args.apply))
     if args.cmd == "query":
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
 
