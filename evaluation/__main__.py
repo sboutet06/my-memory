@@ -8,7 +8,8 @@ import logging
 import sys
 from pathlib import Path
 
-from evaluation.runner import run_all, summarize
+from evaluation.aggregate import aggregate_runs
+from evaluation.runner import run_all, run_all_multi, summarize
 from evaluation.schema import load_cases
 from extraction.graph import DEFAULT_WORKING_DIR
 
@@ -24,6 +25,16 @@ def _fmt_case(result) -> str:
     )
 
 
+def _fmt_agg(agg) -> str:
+    return (
+        f"  {agg.case_id:<25} "
+        f"pass={agg.pass_rate:.2f}  "
+        f"doc={agg.mean_doc_coverage:.2f}±{agg.std_doc_coverage:.2f}  "
+        f"ent={agg.mean_entity_coverage:.2f}±{agg.std_entity_coverage:.2f}  "
+        f"fact={agg.mean_fact_coverage:.2f}±{agg.std_fact_coverage:.2f}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evaluation")
     parser.add_argument(
@@ -33,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--store", type=Path, default=Path("store"))
     parser.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    parser.add_argument(
+        "--runs", type=int, default=1,
+        help="Number of times to run each case (LLM cache cleared between runs) "
+             "to measure retrieval/LLM variance (default: 1).",
+    )
     parser.add_argument(
         "--json", action="store_true",
         help="Emit full JSON (otherwise summary + per-case one-liners).",
@@ -46,28 +62,51 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     cases = load_cases(args.cases)
-    results = asyncio.run(run_all(cases, args.store, args.working_dir))
-    summary = summarize(results)
 
+    if args.runs <= 1:
+        results = asyncio.run(run_all(cases, args.store, args.working_dir))
+        summary = summarize(results)
+        if args.json:
+            print(json.dumps(
+                {"summary": summary, "results": [r.model_dump() for r in results]},
+                indent=2, ensure_ascii=False,
+            ))
+        else:
+            print(f"\n=== Eval summary ({summary['passed']}/{summary['cases']} passed) ===")
+            for r in results:
+                print(_fmt_case(r))
+            print()
+            print(f"  mean doc_coverage   : {summary['mean_doc_coverage']:.2f}")
+            print(f"  mean entity_coverage: {summary['mean_entity_coverage']:.2f}")
+            print(f"  mean fact_coverage  : {summary['mean_fact_coverage']:.2f}")
+            print(f"  forbidden violations: {summary['total_forbidden_violations']}")
+        return 0 if summary["failed"] == 0 else 1
+
+    runs = asyncio.run(run_all_multi(cases, args.store, args.working_dir, args.runs))
+    aggs = aggregate_runs(runs)
     if args.json:
         print(json.dumps(
             {
-                "summary": summary,
-                "results": [r.model_dump() for r in results],
+                "runs": args.runs,
+                "aggregates": [a.model_dump() for a in aggs],
+                "raw_runs": [[r.model_dump() for r in run] for run in runs],
             },
             indent=2, ensure_ascii=False,
         ))
     else:
-        print(f"\n=== Eval summary ({summary['passed']}/{summary['cases']} passed) ===")
-        for r in results:
-            print(_fmt_case(r))
+        n_full_pass = sum(1 for a in aggs if a.pass_rate == 1.0)
+        print(f"\n=== Eval summary over {args.runs} runs "
+              f"({n_full_pass}/{len(aggs)} pass all runs) ===")
+        for a in aggs:
+            print(_fmt_agg(a))
         print()
-        print(f"  mean doc_coverage   : {summary['mean_doc_coverage']:.2f}")
-        print(f"  mean entity_coverage: {summary['mean_entity_coverage']:.2f}")
-        print(f"  mean fact_coverage  : {summary['mean_fact_coverage']:.2f}")
-        print(f"  forbidden violations: {summary['total_forbidden_violations']}")
-
-    return 0 if summary["failed"] == 0 else 1
+        overall_doc = sum(a.mean_doc_coverage for a in aggs) / len(aggs) if aggs else 0.0
+        overall_ent = sum(a.mean_entity_coverage for a in aggs) / len(aggs) if aggs else 0.0
+        overall_fact = sum(a.mean_fact_coverage for a in aggs) / len(aggs) if aggs else 0.0
+        print(f"  overall mean doc : {overall_doc:.2f}")
+        print(f"  overall mean ent : {overall_ent:.2f}")
+        print(f"  overall mean fact: {overall_fact:.2f}")
+    return 0 if all(a.pass_rate == 1.0 for a in aggs) else 1
 
 
 if __name__ == "__main__":

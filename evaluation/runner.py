@@ -86,6 +86,16 @@ async def run_case(
     return score_case(case, answer, cited_filenames)
 
 
+_LLM_CACHE_FILE = "kv_store_llm_response_cache.json"
+
+
+def _clear_llm_cache(working_dir: Path) -> None:
+    """Delete LightRAG's LLM response cache. Forces fresh LLM calls next run."""
+    cache_file = working_dir / _LLM_CACHE_FILE
+    if cache_file.is_file():
+        cache_file.unlink()
+
+
 async def run_all(
     cases: Iterable[EvalCase],
     store_root: Path,
@@ -111,6 +121,26 @@ async def run_all(
     finally:
         await rag.finalize_storages()
     return results
+
+
+async def run_all_multi(
+    cases: list[EvalCase],
+    store_root: Path,
+    working_dir: Path,
+    n_runs: int,
+) -> list[list[EvalCaseResult]]:
+    """Run the full case list `n_runs` times with a cold LLM cache each time.
+
+    Same order each run (matches `aggregate_runs`'s alignment contract).
+    """
+    if n_runs < 1:
+        raise ValueError("n_runs must be >= 1")
+    runs: list[list[EvalCaseResult]] = []
+    for i in range(n_runs):
+        logger.info("eval run %d/%d", i + 1, n_runs)
+        _clear_llm_cache(working_dir)
+        runs.append(await run_all(cases, store_root, working_dir))
+    return runs
 
 
 def summarize(results: list[EvalCaseResult]) -> dict:
