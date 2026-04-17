@@ -1,0 +1,129 @@
+"""Run eval cases against the extraction query API. Needs live LLM."""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from pathlib import Path
+from typing import Iterable
+
+from dotenv import load_dotenv
+from lightrag import QueryParam
+
+from evaluation.schema import EvalCase, EvalCaseResult
+from evaluation.scorer import (
+    count_forbidden,
+    score_document_coverage,
+    score_entity_coverage,
+    score_fact_coverage,
+)
+from extraction.config import ExtractionConfig
+from extraction.graph import DEFAULT_WORKING_DIR, build_rag
+from extraction.provenance import extract_document_ids
+
+logger = logging.getLogger(__name__)
+
+
+def build_doc_id_to_filename(store_root: Path) -> dict[str, str]:
+    """Read `store/*/metadata.json` → {doc_id: original_filename}."""
+    mapping: dict[str, str] = {}
+    if not store_root.exists():
+        return mapping
+    for entry in store_root.iterdir():
+        if not entry.is_dir():
+            continue
+        meta_path = entry / "metadata.json"
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if "document_id" in meta and "original_filename" in meta:
+            mapping[meta["document_id"]] = meta["original_filename"]
+    return mapping
+
+
+def score_case(
+    case: EvalCase,
+    answer: str,
+    cited_filenames: list[str],
+) -> EvalCaseResult:
+    doc = score_document_coverage(case.expected_documents, cited_filenames)
+    ent = score_entity_coverage(case.expected_entities, answer)
+    fac = score_fact_coverage(case.expected_facts, answer)
+    forbid = count_forbidden(case.forbidden_facts, answer)
+    passed = doc == 1.0 and ent == 1.0 and fac == 1.0 and forbid == 0
+    return EvalCaseResult(
+        case_id=case.id,
+        question=case.question,
+        mode=case.mode,
+        answer=answer,
+        document_ids=cited_filenames,
+        doc_coverage=doc,
+        entity_coverage=ent,
+        fact_coverage=fac,
+        forbidden_violations=forbid,
+        passed=passed,
+    )
+
+
+async def run_case(
+    rag,
+    case: EvalCase,
+    id_to_filename: dict[str, str],
+    config: ExtractionConfig,
+) -> EvalCaseResult:
+    answer = await rag.aquery(
+        case.question,
+        param=QueryParam(
+            mode=case.mode,
+            enable_rerank=False,
+            user_prompt=config.temporal_user_prompt,
+        ),
+    )
+    cited_ids = extract_document_ids(answer)
+    cited_filenames = [id_to_filename.get(i, i) for i in cited_ids]
+    return score_case(case, answer, cited_filenames)
+
+
+async def run_all(
+    cases: Iterable[EvalCase],
+    store_root: Path,
+    working_dir: Path,
+) -> list[EvalCaseResult]:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    id_to_filename = build_doc_id_to_filename(store_root)
+    if not id_to_filename:
+        raise SystemExit(f"No ingested docs at {store_root}")
+    if not working_dir.exists():
+        raise SystemExit(f"No extraction store at {working_dir}. Run `extract` first.")
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    results: list[EvalCaseResult] = []
+    try:
+        for case in cases:
+            logger.info("Running %s: %s", case.id, case.question[:60])
+            result = await run_case(rag, case, id_to_filename, config)
+            results.append(result)
+    finally:
+        await rag.finalize_storages()
+    return results
+
+
+def summarize(results: list[EvalCaseResult]) -> dict:
+    if not results:
+        return {"cases": 0}
+    n = len(results)
+    return {
+        "cases": n,
+        "passed": sum(1 for r in results if r.passed),
+        "failed": sum(1 for r in results if not r.passed),
+        "mean_doc_coverage": sum(r.doc_coverage for r in results) / n,
+        "mean_entity_coverage": sum(r.entity_coverage for r in results) / n,
+        "mean_fact_coverage": sum(r.fact_coverage for r in results) / n,
+        "total_forbidden_violations": sum(r.forbidden_violations for r in results),
+    }

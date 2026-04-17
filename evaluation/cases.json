@@ -1,0 +1,40 @@
+{
+  "_schema_note": "See evaluation/schema.py::EvalCase. expected_documents are filename-prefix matches, not UUIDs (UUIDs regenerate on re-ingest). Keep cases small, add as dogfooding surfaces regressions.",
+  "cases": [
+    {
+      "id": "cross-doc-person",
+      "question": "Qui est Sébastien Boutet et dans quels documents apparaît-il ?",
+      "tags": ["cross-doc", "identity"],
+      "notes": "Baseline cross-document identity resolution. Should surface the same person across several heterogeneous docs.",
+      "expected_documents": [
+        "Facture_250",
+        "Compromis",
+        "PasseportSeb",
+        "RLV_CHQ",
+        "Déclaration Impôts"
+      ],
+      "expected_entities": ["Sébastien", "Boutet"],
+      "expected_facts": ["ingénieur"]
+    },
+    {
+      "id": "temporal-addresses",
+      "question": "Quelles sont les adresses de résidence de Sébastien Boutet et comment ont-elles évolué dans le temps ? Indique la plus récente.",
+      "tags": ["temporal", "ordering"],
+      "notes": "Known-weak case. Current graph lists addresses but LLM inconsistently picks the most recent, and often cites Cagnes-sur-Mer (compromis-era) instead of Roquefort-les-Pins (post-acquisition, 2026 bank statement).",
+      "expected_documents": ["RLV_CHQ", "Compromis", "Déclaration Impôts"],
+      "expected_entities": ["Montauroux", "Cagnes", "Roquefort"],
+      "expected_facts": ["Roquefort"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "aggregation-expenses",
+      "question": "Quelle est la catégorie de dépense la plus importante visible dans mes relevés bancaires ?",
+      "tags": ["aggregation", "table"],
+      "notes": "Known-failing case. LightRAG pulls scattered amount-entities from the bank statement but has no category aggregation. LLM tends to answer from tax declaration rather than bank data. This is the target of the table-aware extraction phase.",
+      "expected_documents": ["RLV_CHQ"],
+      "expected_entities": [],
+      "expected_facts": [],
+      "forbidden_facts": []
+    }
+  ]
+}
