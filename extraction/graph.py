@@ -15,6 +15,7 @@ from lightrag import LightRAG
 from extraction.config import ExtractionConfig
 from extraction.llm import make_embedding_func, make_llm_func
 from extraction.provenance import rewrite_node_provenance
+from extraction.rerank import rerank_func
 from extraction.taxonomy import normalize_entity_type
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ async def build_rag(
         working_dir=str(working_dir),
         llm_model_func=make_llm_func(config),
         embedding_func=make_embedding_func(config),
+        rerank_model_func=rerank_func,
         addon_params=config.addon_params(),
     )
     await rag.initialize_storages()

@@ -109,7 +109,6 @@ async def _run_query(question: str, mode: str, working_dir: Path, as_json: bool)
             question,
             param=QueryParam(
                 mode=mode,
-                enable_rerank=False,
                 user_prompt=config.temporal_user_prompt,
             ),
         )

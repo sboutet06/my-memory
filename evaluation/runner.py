@@ -78,7 +78,6 @@ async def run_case(
         case.question,
         param=QueryParam(
             mode=case.mode,
-            enable_rerank=False,
             user_prompt=config.temporal_user_prompt,
         ),
     )
