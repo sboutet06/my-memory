@@ -120,3 +120,90 @@ Cost: ~$0.05-0.10 for the n=9 extraction. Affordable dogfooding.
 ## Known debt (V0)
 - **`degraded` extraction quality**: currently accepted as-is for ID-type documents. The fallback markdown is serviceable but is a flat dump of OCR lines grouped per picture — no structural recovery (no key/value pairs, no logical ordering beyond picture traversal). Acceptable for V0 dogfooding. Revisit when Layer 3 (entity extraction) shows whether it's good enough for the graph or whether a dedicated ocrmac dispatcher producing cleaner linear text is needed.
 - **`.pages` and other proprietary formats**: reported as `unsupported`, no conversion path. Out of V0 scope; add only when a real need surfaces.
+
+---
+
+## Architectural pivot (2026-04-17): core + packs, no domain in core
+
+Dogfooding on personal docs was starting to pull the design toward
+domain-specific typed schemas baked into core (Person/Address/Residence,
+a personal-finance category taxonomy, bank-statement extractors). That
+would have re-solved the problem for every new client/domain.
+
+Revised shape:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ PACKS (optional, per-domain, shipped separately)    │
+│   personal-finance: Transaction, Category, BankExtr │
+│   legal:            Contract, Clause, PartyRole     │
+│   research:         Paper, Citation, Author         │
+│   → declare matchers + schemas; pluggable           │
+├─────────────────────────────────────────────────────┤
+│ CORE — domain-agnostic                              │
+│   • alias resolution (embedding + lexical guards)   │
+│   • temporal precedence (sourced-date annotations)  │
+│   • retrieval reranking (cross-encoder)             │
+│   • evidence/provenance (document_ids everywhere)   │
+│   • eval harness (measurable floor per graph state) │
+│   • pack framework (registry + discovery)           │
+├─────────────────────────────────────────────────────┤
+│ EVIDENCE — LightRAG + chunks + content.md           │
+└─────────────────────────────────────────────────────┘
+```
+
+**Only CORE is required.** Packs are plugins. A graph with no matching
+pack is still queryable — just less structured. If the product pivots
+to a B2B legal client tomorrow, the personal-finance pack is dropped
+and a `legal` pack added; core stays untouched.
+
+## Phases delivered (2026-04-17)
+
+- **Phase 0 — eval harness** (`evaluation/`): 3 gold-standard seed Q/A
+  cases from real dogfooding, pure substring/set scoring, multi-run
+  aggregation with cache purge between runs. Measurable floor for every
+  future change. On this corpus, retrieval is deterministic given a
+  stable graph — stddev across runs is 0.00, so single-run eval is
+  trustworthy per graph state.
+- **Reranker** (`extraction/rerank.py`): local cross-encoder
+  (`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` by default, ~117 MB).
+  Deterministic, multilingual, addresses retrieval-variance directly.
+  The `aggregation-expenses` case now surfaces the bank doc which
+  vector similarity alone was dropping.
+- **Phase 1 — alias resolution** (`extraction/alias.py`): embedding
+  clustering + lexical-containment guard + ambiguity detector. 29 safe
+  merges on 911 entities in the dogfood corpus; four surface forms of
+  `Sébastien Boutet` correctly consolidate; three `Plan de Prévention
+  des Risques …` variants correctly stay split.
+- **Phase 2 — temporal annotations** (`extraction/temporal.py`):
+  prefixes every node/edge description with `[sourced: YYYY-MM-DD, …]`
+  from `document_ids → document_date`. 866 nodes + 924 edges annotated.
+  `mean entity_coverage 0.89 → 1.00`, `mean fact_coverage 0.67 → 1.00`
+  on the eval seed. The "most recent address" query now correctly
+  returns Roquefort-les-Pins (2026-03-26), not the compromis-era Cagnes.
+- **Phase 3 — pack framework** (`packs/`): `Pack` protocol,
+  `PackRegistry`, filesystem `discover_packs(dir)`. No packs yet — the
+  framework is ready for Phase 4.
+
+## Design principles respected
+
+- Generic core; no domain-specific types or rules anywhere outside
+  `packs/<name>/`.
+- Progressive refinement: alias resolution and relation-type induction
+  are corpus-driven, not rule-driven. More docs → better graph.
+- Minimal hardcoded precedence: only temporal ordering (newer sourced
+  date wins for time-varying facts). Every other priority is emergent
+  or pack-owned.
+- Eval before tuning: any future phase moves measured numbers on the
+  seed cases, or it doesn't land.
+
+## Phases remaining
+
+- **Phase 4** — first pack (personal-finance) under `packs/personal_finance/`
+  implementing a bank-statement extractor + Transaction/Category
+  schema. Validates the pack interface; fixes the
+  `aggregation-expenses` case deterministically (no LLM guessing from
+  scattered amount literals).
+- **Phase 5** — relation-type induction: cluster edge descriptions
+  across the graph to surface candidate predicates. Feeds both the
+  emergent-schema UX and typed supersedes edges.

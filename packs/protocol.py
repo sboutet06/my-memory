@@ -1,0 +1,30 @@
+"""Pack protocol — the minimum contract a domain pack must satisfy."""
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class Pack(Protocol):
+    """A pluggable domain extension.
+
+    Implementations live under `packs/<name>/` and expose a module-level
+    `PACK` instance (typically of the pack's own class). Discovery
+    imports the submodule and picks up `PACK`.
+
+    The contract is deliberately minimal for V0 — just identity and
+    per-document applicability. Structured extraction and query-tool
+    hooks are added later when a pack actually needs them.
+    """
+
+    name: str
+    version: str
+
+    def matches(self, metadata: dict, content_md: str) -> bool:
+        """True if this pack should handle the given ingested document.
+
+        `metadata` is the `DocumentMetadata` dict from
+        `store/{doc_id}/metadata.json`; `content_md` is the Docling
+        markdown content.
+        """
+        ...
