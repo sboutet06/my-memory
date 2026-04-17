@@ -32,12 +32,18 @@ _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 # attribute so the graph can say something sensible about addresses,
 # employers, phones, vehicles, etc. — anything that may change over time.
 _DEFAULT_TEMPORAL_USER_PROMPT = (
+    "Many entities and relations in the knowledge graph are prefixed "
+    "with `[sourced: YYYY-MM-DD, …]` listing the dates of the documents "
+    "they were extracted from. Treat the LATEST sourced date as the "
+    "most recent observation of that fact. "
     "When listing facts that may change over time (addresses, employers, "
-    "phones, emails, spouses, vehicles, bank accounts), order them "
-    "chronologically from oldest to newest based on any document-date "
-    "context available, flag the most recent as current, and attach the "
-    "source date when known. If the chronology is ambiguous, say so "
-    "explicitly rather than guess."
+    "phones, emails, spouses, vehicles, bank accounts, prices, contract "
+    "terms), order them chronologically from oldest to newest using "
+    "those sourced dates, flag the most recent as current, and attach "
+    "the source date when stating each fact. "
+    "If multiple facts of the same kind appear with the same latest "
+    "date, or if the chronology is ambiguous, say so explicitly rather "
+    "than guess."
 )
 
 

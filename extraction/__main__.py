@@ -15,6 +15,7 @@ from extraction.config import ExtractionConfig
 from extraction.alias import DEFAULT_THRESHOLD
 from extraction.graph import (
     DEFAULT_WORKING_DIR,
+    annotate_temporal,
     build_rag,
     discover_store_docs,
     extract_documents,
@@ -40,6 +41,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"LightRAG working directory (default: {DEFAULT_WORKING_DIR})",
     )
     p_extract.add_argument("-v", "--verbose", action="store_true")
+
+    p_temporal = sub.add_parser(
+        "annotate-temporal",
+        help="Prefix every node/edge description with its source document dates",
+    )
+    p_temporal.add_argument("--store", type=Path, default=Path("store"))
+    p_temporal.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_temporal.add_argument(
+        "--dry-run", action="store_true",
+        help="Count what would be annotated without writing changes.",
+    )
+    p_temporal.add_argument("-v", "--verbose", action="store_true")
 
     p_dedupe = sub.add_parser(
         "dedupe",
@@ -106,6 +119,25 @@ async def _run_extract(store_root: Path, working_dir: Path) -> int:
             "language": config.language,
         },
     }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+async def _run_annotate_temporal(store_root: Path, working_dir: Path, dry_run: bool) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        report = await annotate_temporal(rag, store_root, dry_run=dry_run)
+    finally:
+        await rag.finalize_storages()
+
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
@@ -189,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "extract":
         return asyncio.run(_run_extract(args.store, args.working_dir))
+    if args.cmd == "annotate-temporal":
+        return asyncio.run(_run_annotate_temporal(args.store, args.working_dir, args.dry_run))
     if args.cmd == "dedupe":
         return asyncio.run(_run_dedupe(args.working_dir, args.threshold, args.apply))
     if args.cmd == "query":

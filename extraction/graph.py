@@ -20,11 +20,14 @@ from extraction.alias import (
     cluster_entities,
     pick_canonical,
 )
+from datetime import date
+
 from extraction.config import ExtractionConfig
 from extraction.llm import make_embedding_func, make_llm_func
 from extraction.provenance import rewrite_node_provenance
 from extraction.rerank import rerank_func
 from extraction.taxonomy import normalize_entity_type
+from extraction.temporal import annotate_with_sourced_dates
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +158,86 @@ async def post_process(
         "nodes_rewritten": node_count,
         "edges_rewritten": edge_count,
         "entity_types_remapped": types_remapped,
+    }
+
+
+def _build_doc_id_to_date(store_root: Path) -> dict[str, date]:
+    """Read `store/*/metadata.json` → {document_id: date}. None dates skipped."""
+    mapping: dict[str, date] = {}
+    if not store_root.exists():
+        return mapping
+    for entry in sorted(store_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        meta_path = entry / "metadata.json"
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        doc_id = meta.get("document_id")
+        raw_date = meta.get("document_date")
+        if not doc_id or not raw_date:
+            continue
+        try:
+            mapping[doc_id] = date.fromisoformat(raw_date)
+        except ValueError:
+            continue
+    return mapping
+
+
+async def annotate_temporal(
+    rag: LightRAG,
+    store_root: Path,
+    *,
+    dry_run: bool = False,
+) -> dict:
+    """Prefix every node and edge description with `[sourced: dates]`.
+
+    Pure post-processing. Idempotent: re-running skips already-annotated
+    records. Returns counts.
+    """
+    id_to_date = _build_doc_id_to_date(store_root)
+    if not id_to_date:
+        return {"nodes_annotated": 0, "edges_annotated": 0, "dry_run": dry_run}
+
+    kg = rag.chunk_entity_relation_graph
+    labels = await kg.get_all_labels()
+
+    nodes_annotated = 0
+    edges_annotated = 0
+    edges_seen: set[tuple[str, str]] = set()
+
+    for name in labels:
+        node = await kg.get_node(name)
+        if node is None:
+            continue
+        if annotate_with_sourced_dates(node, id_to_date):
+            nodes_annotated += 1
+            if not dry_run:
+                await kg.upsert_node(name, node)
+
+        for src, tgt in (await kg.get_node_edges(name) or []):
+            key = tuple(sorted([src, tgt]))
+            if key in edges_seen:
+                continue
+            edges_seen.add(key)
+            edge = await kg.get_edge(src, tgt)
+            if edge is None:
+                continue
+            if annotate_with_sourced_dates(edge, id_to_date):
+                edges_annotated += 1
+                if not dry_run:
+                    await kg.upsert_edge(src, tgt, edge)
+
+    if not dry_run and (nodes_annotated or edges_annotated):
+        await kg.index_done_callback()
+
+    return {
+        "nodes_annotated": nodes_annotated,
+        "edges_annotated": edges_annotated,
+        "dry_run": dry_run,
     }
 
 
