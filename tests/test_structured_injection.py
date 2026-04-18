@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from packs.personal_documents.injector import plan_transaction_nodes
 from packs.personal_documents.schemas.transaction import Transaction
-from extraction.structured import plan_transaction_nodes
 
 
 def _tx(debit=None, credit=None, description="VIR X", rib="30004 02374 1"):

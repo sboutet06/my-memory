@@ -44,3 +44,21 @@ def test_no_collision_with_core_types() -> None:
     declared = set(getattr(pack, "declared_types", []))
     overlap = declared & set(_DEFAULT_ENTITY_TYPES)
     assert not overlap, f"pack redeclares core types: {overlap}"
+
+
+def test_low_signal_types_declared() -> None:
+    """Pack declares the retrieval-infra types core should hide."""
+    reg = discover_packs(Path("packs"))
+    pack = reg.get("personal_documents")
+    low_sig = set(getattr(pack, "low_signal_types", ()))
+    # Retrieval-infra types injected by the bank-statement pipeline.
+    for t in ("transaction", "transaction_category", "account"):
+        assert t in low_sig, f"expected {t} in low_signal_types"
+
+
+def test_injector_hooks_exposed() -> None:
+    """Pack routes structured extraction + summary extras via hooks."""
+    reg = discover_packs(Path("packs"))
+    pack = reg.get("personal_documents")
+    assert callable(getattr(pack, "inject_structured", None))
+    assert callable(getattr(pack, "summary_extras_for_doc", None))

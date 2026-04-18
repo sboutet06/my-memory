@@ -110,6 +110,32 @@ class TestCatalog:
         assert not any(n["name"] == f"{CATALOG_PREFIX}amount" for n in plan)
 
 
+class TestExtraLowSignalTypes:
+    def test_without_extras_pack_types_surface(self) -> None:
+        # With no packs, `transaction` entities ARE profileable — core
+        # only hides its own always-noisy types (amount/date/identifier).
+        graph = dict([
+            _node("tx-abc", "transaction", "doc-1<SEP>doc-2"),
+        ])
+        meta = _meta("doc-1", "doc-2")
+        plan = plan_index_nodes(graph, meta)
+        names = [n["name"] for n in plan if n["name"].startswith(ENTITY_PROFILE_PREFIX)]
+        assert names == [f"{ENTITY_PROFILE_PREFIX}tx-abc"]
+
+    def test_with_pack_low_signal_hides_pack_types(self) -> None:
+        graph = dict([
+            _node("tx-abc", "transaction", "doc-1<SEP>doc-2"),
+            _node("Alice", "person", "doc-1<SEP>doc-2"),
+        ])
+        meta = _meta("doc-1", "doc-2")
+        plan = plan_index_nodes(
+            graph, meta,
+            extra_low_signal_types=("transaction", "account"),
+        )
+        names = [n["name"] for n in plan if n["name"].startswith(ENTITY_PROFILE_PREFIX)]
+        assert names == [f"{ENTITY_PROFILE_PREFIX}Alice"]
+
+
 class TestIdempotency:
     def test_planner_is_pure(self) -> None:
         graph = dict([

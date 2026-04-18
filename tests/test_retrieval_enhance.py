@@ -4,8 +4,8 @@ from __future__ import annotations
 from extraction.retrieval_enhance import (
     _clean_content_head,
     build_doc_summary,
-    transactions_extras,
 )
+from packs.personal_documents.injector import transactions_extras
 
 
 class TestBuildDocSummary:

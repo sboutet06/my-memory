@@ -1,20 +1,35 @@
 """Inject pack-produced structured records into the LightRAG graph.
 
 Pure planner (`plan_transaction_nodes`) builds the node + edge list; the
-async `inject_*` function writes them to a real `LightRAG.chunk_entity_relation_graph`.
+async `inject_structured` function writes them to a real
+`LightRAG.chunk_entity_relation_graph`.
+
+This module lives inside the pack, not in core. Core knows nothing about
+transactions, accounts, or expense categories.
 """
 from __future__ import annotations
 
-import logging
-from typing import Iterable
-
 import hashlib
+import logging
 from collections import defaultdict
 from decimal import Decimal
+from typing import Iterable, Optional
 
-from packs.personal_documents.schemas.transaction import Transaction, TransactionDirection
+from packs.personal_documents.schemas.transaction import Transaction
 
 logger = logging.getLogger(__name__)
+
+
+# ----------------------------- pack taxonomy ----------------------------
+
+# Entity types this pack injects as retrieval-infra and that core's
+# Profile/Catalog / summary-chunk builders should hide.
+LOW_SIGNAL_TYPES: tuple[str, ...] = (
+    "transaction", "transaction_category", "account",
+)
+
+
+# ----------------------------- node naming ------------------------------
 
 
 def _account_node_name(rib: str | None) -> str:
@@ -31,7 +46,6 @@ def _tx_node_name(t: Transaction) -> str:
     keep the name unique across identical-looking rows.
     """
     short = t.description.strip().replace("\n", " ")[:60]
-    # Stable hash across processes (Python's builtin hash() is randomized).
     suffix = hashlib.md5(t.description.encode("utf-8")).hexdigest()[:4]
     return (
         f"Transaction {t.direction.value} {t.amount} EUR {t.date.isoformat()} "
@@ -51,29 +65,23 @@ def _category_summary_name(doc_id: str, direction: str, category: str) -> str:
     )
 
 
+# ----------------------------- planning ---------------------------------
+
+
 def plan_transaction_nodes(
     transactions: Iterable[Transaction],
 ) -> tuple[list[dict], list[dict]]:
     """Return `(nodes, edges)` for the given transactions.
 
-    Emits three node kinds:
-      - transaction (per row)
-      - account (per rib)
-      - document (per source_doc_id)
-      - category_summary (per doc × direction × category; aggregates total & count)
-
-    And edges:
-      - transaction → account
-      - transaction → source document
-      - transaction → its category summary
-      - category summary → source document
+    Emits four node kinds: transaction, transaction_category (aggregate),
+    account, document. Edges wire transactions to their account, source
+    document, and per-(doc, direction, category) summary.
     """
     transactions = list(transactions)
 
     nodes_by_name: dict[str, dict] = {}
     edges: list[dict] = []
 
-    # First pass: aggregate totals per (doc, direction, category)
     buckets: dict[tuple[str, str, str], dict] = defaultdict(
         lambda: {"total": Decimal("0"), "count": 0},
     )
@@ -82,7 +90,6 @@ def plan_transaction_nodes(
         buckets[key]["total"] += t.amount
         buckets[key]["count"] += 1
 
-    # Emit summary nodes.
     for (doc_id, direction, category), agg in buckets.items():
         name = _category_summary_name(doc_id, direction, category)
         nodes_by_name[name] = {
@@ -138,12 +145,10 @@ def plan_transaction_nodes(
         edges.append({
             "src": tx_name, "tgt": summary_name, "relation": "in_category",
         })
-        # One edge per summary → document, deduplicated via tuple-check below.
         edges.append({
             "src": summary_name, "tgt": doc_name, "relation": "summary_of_document",
         })
 
-    # Dedupe edges by (src, tgt, relation).
     seen: set[tuple[str, str, str]] = set()
     deduped: list[dict] = []
     for e in edges:
@@ -157,7 +162,6 @@ def plan_transaction_nodes(
 
 
 def _tx_description(attrs: dict) -> str:
-    """Rich, retrieval-friendly description for a transaction node."""
     return (
         f"Bank transaction on {attrs['date']} ({attrs['direction']}) of "
         f"{attrs['amount']} EUR, category {attrs['category']}. "
@@ -175,15 +179,15 @@ def _summary_description(attrs: dict) -> str:
     )
 
 
+# ----------------------------- injection --------------------------------
+
+
 async def inject_transactions(rag, transactions: list[Transaction]) -> dict:
     """Create structured nodes + edges via LightRAG's public API.
 
     `acreate_entity` / `acreate_relation` write to BOTH the graph storage
     AND the entity/relation vector stores, so the new records are
     reachable from vector-similarity retrieval at query time.
-
-    Idempotent: on re-run, LightRAG updates existing entities in place
-    (same name → same doc, LightRAG merges).
     """
     if not transactions:
         return {"nodes_upserted": 0, "edges_upserted": 0, "errors": []}
@@ -194,7 +198,7 @@ async def inject_transactions(rag, transactions: list[Transaction]) -> dict:
     edges_upserted = 0
     errors: list[str] = []
 
-    existing = set()
+    existing: set[str] = set()
     kg = rag.chunk_entity_relation_graph
 
     for node in nodes:
@@ -216,9 +220,6 @@ async def inject_transactions(rag, transactions: list[Transaction]) -> dict:
             "source_id": doc_id_for_citation,
         }
         if doc_id_for_citation:
-            # `file_path` surfaces in LightRAG citations. Any string
-            # containing `/store/<uuid>/…` is parseable back to the
-            # source document by extract_document_ids.
             payload["file_path"] = f"store/{doc_id_for_citation}/content.md"
         for k, v in node["attrs"].items():
             payload[k] = str(v) if v is not None else ""
@@ -228,7 +229,6 @@ async def inject_transactions(rag, transactions: list[Transaction]) -> dict:
             if existing_node is None:
                 await rag.acreate_entity(name, payload)
             else:
-                # keep the existing source_id blob intact; just update fields.
                 await rag.aedit_entity(name, payload, allow_rename=False)
             existing.add(name)
             nodes_upserted += 1
@@ -249,7 +249,6 @@ async def inject_transactions(rag, transactions: list[Transaction]) -> dict:
             if existing_edge is None:
                 await rag.acreate_relation(src, tgt, relation_data)
                 edges_upserted += 1
-            # else: already present, no-op (acreate_relation raises on dup)
         except Exception as exc:
             errors.append(f"edge {src!r}→{tgt!r}: {exc}")
 
@@ -258,3 +257,74 @@ async def inject_transactions(rag, transactions: list[Transaction]) -> dict:
         "edges_upserted": edges_upserted,
         "errors": errors,
     }
+
+
+# ----------------------- pack hook entry points -------------------------
+
+
+async def inject_structured(rag, result: dict) -> dict:
+    """Pack hook: inject whatever the pack's `extract_structured` produced.
+
+    Dispatches on `result["kind"]`; each kind has its own injector. Core
+    never inspects the result — it just hands it back to the pack.
+    """
+    kind = result.get("kind")
+    if kind == "bank_statement":
+        return await inject_transactions(rag, result.get("transactions") or [])
+    return {"nodes_upserted": 0, "edges_upserted": 0, "errors": []}
+
+
+# --------------------- summary-extras formatters ------------------------
+
+
+def transactions_extras(rag_node_attrs_list: list[dict]) -> list[str]:
+    """One line per (direction, category) aggregate, sorted by total desc."""
+    out: list[tuple[str, str]] = []
+    for attrs in rag_node_attrs_list:
+        cat = attrs.get("category", "")
+        direction = attrs.get("direction", "")
+        total = attrs.get("total_amount", "")
+        count = attrs.get("count", "")
+        out.append((
+            total,
+            f"Category {cat} ({direction}): {total} EUR across {count} transactions",
+        ))
+
+    def _num(s: str) -> float:
+        try:
+            return float(s)
+        except (TypeError, ValueError):
+            return 0.0
+
+    out.sort(key=lambda x: -_num(x[0]))
+    return [line for _, line in out]
+
+
+async def summary_extras_for_doc(rag, doc_id: str) -> list[str]:
+    """Pack hook: return retrieval-friendly extra lines for `doc_id`'s summary.
+
+    Currently collects Phase 4.5 'Expense summary' aggregates. Filters by
+    node name prefix AND source_id to avoid pulling in LLM-invented
+    `transaction_category` entities (which share the type after taxonomy
+    enforcement but aren't the structured aggregates).
+    """
+    kg = rag.chunk_entity_relation_graph
+    labels = await kg.get_all_labels()
+    descriptions: list[str] = []
+    for name in labels:
+        if not name.startswith("Expense summary "):
+            continue
+        node = await kg.get_node(name)
+        if node is None:
+            continue
+        if node.get("source_id", "") != doc_id:
+            continue
+        desc = node.get("description", "").strip()
+        if desc:
+            # Strip any leading temporal prefix injected by Phase 2.
+            if desc.startswith("[sourced:"):
+                end = desc.find("]")
+                if end != -1:
+                    desc = desc[end + 1:].strip()
+            descriptions.append(desc)
+    return descriptions

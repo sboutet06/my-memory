@@ -4,15 +4,16 @@ Addresses the chunks_vdb bottleneck surfaced by Phase 5.1 diagnostics:
 queries that match a document via entities often fail to retrieve any
 of that doc's chunks because the chunks' local text doesn't match the
 query tokens. A compact per-doc summary — filename, date, top entity
-names, pack highlights, content head — gives chunks_vdb a retrieval-
-friendly anchor for every document.
+names, pack-produced highlights — gives chunks_vdb a retrieval-friendly
+anchor for every document.
 
 Generic by design:
   - Every store doc gets a summary chunk.
-  - The summary composer accepts optional `structured_extras` produced
-    by pack extractors (e.g. bank-statement category totals), so pack
-    signals flow into retrieval without the enhancer knowing about
-    individual pack schemas.
+  - Pack extras are pulled via each pack's optional
+    `summary_extras_for_doc(rag, doc_id)` async hook — core never
+    inspects pack schemas.
+  - Low-signal entity types (numerics, identifiers, pack-declared infra)
+    are filtered out of the Key entities list.
   - No query-time cost; summaries are upserted once, post-extraction.
   - Idempotent: re-running upserts the same keys.
 """
@@ -21,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from extraction.provenance import parse_document_ids
 
@@ -38,14 +39,18 @@ SUMMARY_CHUNK_PREFIX = "summary-chunk-"
 _SUMMARY_CONTENT_HEAD_CHARS = 1500
 _SUMMARY_MAX_ENTITIES = 40
 
-# Entity types that carry semantic retrieval signal. Numeric/identifier types
-# pollute the summary and crowd out names — drop them from the summary view.
-_LOW_SIGNAL_TYPES: frozenset[str] = frozenset({
+# Core types that never belong in the Key entities line. Packs extend
+# this via `low_signal_types`; union happens at call sites.
+_CORE_LOW_SIGNAL_TYPES: frozenset[str] = frozenset({
     "amount", "date", "identifier",
-    # Pack-injected infra — summary-level relevance is already covered by
-    # the structured_extras block.
-    "transaction", "transaction_category", "account",
 })
+
+
+def _pack_low_signal_types(packs: Iterable[Any]) -> frozenset[str]:
+    extra: set[str] = set()
+    for p in packs or ():
+        extra.update(getattr(p, "low_signal_types", ()) or ())
+    return frozenset(extra)
 
 
 def _fmt_date(raw) -> str:
@@ -68,7 +73,6 @@ def _clean_content_head(content: str) -> str:
         noise_chars = sum(1 for c in s if c in "|-: ")
         if noise_chars / max(len(s), 1) > 0.5:
             continue
-        # Cap each line so a single very long line can't blow the budget.
         remaining = _SUMMARY_CONTENT_HEAD_CHARS - taken
         if remaining <= 0:
             break
@@ -91,7 +95,6 @@ def build_doc_summary(
     chunks complement the existing Docling content chunks rather than
     competing with them in chunks_vdb top-K.
     """
-    # Note: `content_md` is intentionally unused for body text. See docstring.
     del content_md
     lines: list[str] = []
     fn = metadata.get("original_filename") or "unknown"
@@ -100,7 +103,6 @@ def build_doc_summary(
     quality = metadata.get("extraction_quality") or "unknown"
     doc_context = metadata.get("doc_context") or []
     lines.append(f"Document: {fn}")
-    # Repeat filename tokens unquoted so they embed as plain words too.
     lines.append(f"Filename tokens: {fn.replace('_', ' ').replace('-', ' ')}")
     lines.append(f"Document date: {date}")
     lines.append(f"Document ID: {doc_id}")
@@ -117,41 +119,18 @@ def build_doc_summary(
     return "\n".join(lines)
 
 
-# --------------------- structured-extras composers -----------------------
-
-
-def transactions_extras(rag_node_attrs_list: list[dict]) -> list[str]:
-    """One line per (direction, category) summary, sorted by amount desc."""
-    out: list[tuple[str, str]] = []
-    for attrs in rag_node_attrs_list:
-        cat = attrs.get("category", "")
-        direction = attrs.get("direction", "")
-        total = attrs.get("total_amount", "")
-        count = attrs.get("count", "")
-        out.append((
-            total,
-            f"Category {cat} ({direction}): {total} EUR across {count} transactions",
-        ))
-    # Sort descending by total (string compare is OK for our magnitudes; guard numeric).
-    def _num(s: str) -> float:
-        try:
-            return float(s)
-        except (TypeError, ValueError):
-            return 0.0
-    out.sort(key=lambda x: -_num(x[0]))
-    return [line for _, line in out]
-
-
 # --------------------------- writer (async) -----------------------------
 
 
-async def _entity_names_for_doc(rag, doc_id: str) -> list[str]:
+async def _entity_names_for_doc(
+    rag, doc_id: str, low_signal_types: frozenset[str],
+) -> list[str]:
     """Return semantic-signal entity names for `doc_id`.
 
-    Filters out low-signal types (amount/date/identifier and pack-
-    injected infra nodes) so the summary surfaces people, organizations,
-    locations, roles, medications, vehicles — the tokens a natural-
-    language query is likely to contain.
+    Filters out low-signal types (core numerics + pack-declared infra)
+    so the summary surfaces people, organizations, locations, roles,
+    medications, vehicles — the tokens a natural-language query is
+    likely to contain.
     """
     kg = rag.chunk_entity_relation_graph
     labels = await kg.get_all_labels()
@@ -163,51 +142,48 @@ async def _entity_names_for_doc(rag, doc_id: str) -> list[str]:
         ids = parse_document_ids(node.get("document_ids"))
         if doc_id not in ids:
             continue
-        if (node.get("entity_type") or "") in _LOW_SIGNAL_TYPES:
+        if (node.get("entity_type") or "") in low_signal_types:
             continue
         names.append(name)
     return names
 
 
-async def _transaction_extras_for_doc(rag, doc_id: str) -> list[str]:
-    """Collect Phase 4.5 'Expense summary' nodes for `doc_id`.
-
-    We filter on node name prefix AND source_id to avoid pulling in
-    LLM-invented `transaction_category` entities (which share the type
-    after taxonomy enforcement but aren't the structured aggregates).
-    """
-    kg = rag.chunk_entity_relation_graph
-    labels = await kg.get_all_labels()
-    descriptions: list[str] = []
-    for name in labels:
-        if not name.startswith("Expense summary "):
+async def _pack_extras_for_doc(packs: Iterable[Any], rag, doc_id: str) -> list[str]:
+    """Collect extras lines from every pack that exposes `summary_extras_for_doc`."""
+    out: list[str] = []
+    for pack in packs or ():
+        hook = getattr(pack, "summary_extras_for_doc", None)
+        if not callable(hook):
             continue
-        node = await kg.get_node(name)
-        if node is None:
+        try:
+            lines = await hook(rag, doc_id)
+        except Exception as exc:
+            logger.warning("pack %r summary_extras failed for %s: %s",
+                           getattr(pack, "name", "?"), doc_id, exc)
             continue
-        if node.get("source_id", "") != doc_id:
-            continue
-        desc = node.get("description", "").strip()
-        if desc:
-            # Strip any leading temporal prefix injected by Phase 2.
-            if desc.startswith("[sourced:"):
-                end = desc.find("]")
-                if end != -1:
-                    desc = desc[end + 1:].strip()
-            descriptions.append(desc)
-    return descriptions
+        if lines:
+            out.extend(lines)
+    return out
 
 
 async def write_doc_summary_chunks(
     rag,
     store_root: Path,
+    *,
+    packs: Iterable[Any] = (),
 ) -> dict:
     """Upsert one summary chunk per document under `store_root`.
+
+    `packs` provides optional `summary_extras_for_doc` hooks and
+    `low_signal_types` attributes. Empty/missing = core-only behavior.
 
     Returns {docs_scanned, summaries_written}.
     """
     if not store_root.exists():
         return {"docs_scanned": 0, "summaries_written": 0}
+
+    packs_list = list(packs) if packs else []
+    low_signal = _CORE_LOW_SIGNAL_TYPES | _pack_low_signal_types(packs_list)
 
     summaries: dict[str, dict] = {}
     scanned = 0
@@ -227,8 +203,8 @@ async def write_doc_summary_chunks(
         if not doc_id:
             continue
 
-        entity_names = await _entity_names_for_doc(rag, doc_id)
-        extras = await _transaction_extras_for_doc(rag, doc_id)
+        entity_names = await _entity_names_for_doc(rag, doc_id, low_signal)
+        extras = await _pack_extras_for_doc(packs_list, rag, doc_id)
         summary = build_doc_summary(meta, content, entity_names, extras)
 
         chunk_id = f"{SUMMARY_CHUNK_PREFIX}{doc_id}"
@@ -243,8 +219,7 @@ async def write_doc_summary_chunks(
         await rag.chunks_vdb.upsert(summaries)
         await rag.chunks_vdb.index_done_callback()
         # Also mirror into the KV chunk store so downstream retrieval
-        # lookups via full_doc_id remain consistent. LightRAG reads the
-        # KV store for content when building context.
+        # lookups via full_doc_id remain consistent.
         await rag.text_chunks.upsert(summaries)
         await rag.text_chunks.index_done_callback()
 
@@ -298,15 +273,12 @@ async def write_index_nodes(
     min_docs_for_profile: int = 2,
     min_entities_for_catalog: int = 2,
     dry_run: bool = False,
+    packs: Iterable[Any] = (),
 ) -> dict:
     """Plan + inject answer-shaped index nodes (Profile / Catalog).
 
-    On `dry_run=True`, returns the plan without any mutation.
-    Otherwise:
-      1. Delete prior index nodes (idempotent re-run).
-      2. Snapshot graph; pass to planner.
-      3. Create each index node via rag.acreate_entity so it lands in
-         both the graph and the entity vector DB.
+    `packs` contributes optional `low_signal_types` that extend the core
+    set hidden from Profile/Catalog indexing.
     """
     from extraction.graph import snapshot_nodes  # local to avoid cycles
 
@@ -320,10 +292,13 @@ async def write_index_nodes(
     # don't compound on previous runs.
     live_snapshot = {k: v for k, v in snapshot.items() if not is_index_node_name(k)}
 
+    extra_low_signal = _pack_low_signal_types(packs or ())
+
     plan = plan_index_nodes(
         live_snapshot, store_meta,
         min_docs_for_profile=min_docs_for_profile,
         min_entities_for_catalog=min_entities_for_catalog,
+        extra_low_signal_types=extra_low_signal,
     )
 
     if dry_run:

@@ -32,12 +32,12 @@ CATALOG_PREFIX = "Catalog: "
 ENTITY_PROFILE_TYPE = "entity_profile"
 CATALOG_TYPE = "catalog_index"
 
-# Entity types that are too noisy to profile / catalog. Same philosophy
-# as retrieval_enhance._LOW_SIGNAL_TYPES — numeric/identifier types and
-# pack-infra types don't carry retrieval intent for human queries.
-_LOW_SIGNAL_TYPES: frozenset[str] = frozenset({
+# Entity types core always hides from profile / catalog indexing:
+# generic numerics/identifiers plus retrieval-infra types. Packs contribute
+# their own low-signal types via the optional `low_signal_types` attribute;
+# `plan_index_nodes` unions them in.
+_CORE_LOW_SIGNAL_TYPES: frozenset[str] = frozenset({
     "amount", "date", "identifier",
-    "transaction", "transaction_category", "account",
     ENTITY_PROFILE_TYPE, CATALOG_TYPE,
 })
 
@@ -95,11 +95,12 @@ def _plan_entity_profiles(
     graph: dict[str, dict],
     store_meta: dict,
     min_docs: int,
+    low_signal_types: frozenset[str],
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for name, node in graph.items():
         etype = node.get("entity_type") or ""
-        if etype in _LOW_SIGNAL_TYPES:
+        if etype in low_signal_types:
             continue
         doc_ids = [d for d in _entity_doc_ids(node) if d in store_meta]
         if len(doc_ids) < min_docs:
@@ -134,12 +135,13 @@ def _plan_catalogs(
     graph: dict[str, dict],
     store_meta: dict,
     min_entities: int,
+    low_signal_types: frozenset[str],
 ) -> list[dict[str, Any]]:
     # Group entities by type, collecting their member names + doc_ids.
     type_members: dict[str, list[tuple[str, list[str]]]] = defaultdict(list)
     for name, node in graph.items():
         etype = node.get("entity_type") or ""
-        if etype in _LOW_SIGNAL_TYPES:
+        if etype in low_signal_types:
             continue
         doc_ids = [d for d in _entity_doc_ids(node) if d in store_meta]
         if not doc_ids:
@@ -186,10 +188,17 @@ def plan_index_nodes(
     *,
     min_docs_for_profile: int = DEFAULT_MIN_DOCS_FOR_PROFILE,
     min_entities_for_catalog: int = DEFAULT_MIN_ENTITIES_FOR_CATALOG,
+    extra_low_signal_types: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
-    """Plan synthetic Profile / Catalog nodes. Pure function, no I/O."""
-    profiles = _plan_entity_profiles(graph, store_meta, min_docs_for_profile)
-    catalogs = _plan_catalogs(graph, store_meta, min_entities_for_catalog)
+    """Plan synthetic Profile / Catalog nodes. Pure function, no I/O.
+
+    `extra_low_signal_types` — usually the union of `pack.low_signal_types`
+    across active packs — extends core's always-hidden types (amount, date,
+    identifier, index-infra types).
+    """
+    low_signal = _CORE_LOW_SIGNAL_TYPES | frozenset(extra_low_signal_types)
+    profiles = _plan_entity_profiles(graph, store_meta, min_docs_for_profile, low_signal)
+    catalogs = _plan_catalogs(graph, store_meta, min_entities_for_catalog, low_signal)
     # Deterministic order: profiles alphabetical, catalogs alphabetical.
     profiles.sort(key=lambda n: n["name"])
     catalogs.sort(key=lambda n: n["name"])

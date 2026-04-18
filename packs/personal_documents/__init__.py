@@ -13,6 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from packs.personal_documents.injector import (
+    LOW_SIGNAL_TYPES,
+    inject_structured as _inject_structured,
+    summary_extras_for_doc as _summary_extras_for_doc,
+)
 from packs.personal_documents.router import (
     detect_doc_kind,
     extract_structured as _extract_structured,
@@ -64,6 +69,10 @@ class _PersonalDocumentsPack:
         "accommodation",
     )
 
+    # Entity types this pack injects as retrieval-infra; core hides them
+    # from Profile/Catalog and doc-summary views.
+    low_signal_types: tuple[str, ...] = LOW_SIGNAL_TYPES
+
     def matches(self, metadata: dict, content_md: str) -> bool:
         """Claim every document for the taxonomy-augmentation purpose.
 
@@ -81,6 +90,14 @@ class _PersonalDocumentsPack:
         or None when no extractor matches.
         """
         return _extract_structured(metadata, content_md)
+
+    async def inject_structured(self, rag, result: dict) -> dict:
+        """Write the records produced by `extract_structured` into the graph."""
+        return await _inject_structured(rag, result)
+
+    async def summary_extras_for_doc(self, rag, doc_id: str) -> list[str]:
+        """Retrieval-friendly extras to splice into `doc_id`'s summary chunk."""
+        return await _summary_extras_for_doc(rag, doc_id)
 
 
 PACK = _PersonalDocumentsPack()

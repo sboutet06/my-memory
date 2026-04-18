@@ -25,11 +25,24 @@ class Pack(Protocol):
     #     Entity types the pack contributes to the extraction taxonomy.
     #     Unioned with core types; the LLM is asked to use them when
     #     applicable. Packs that don't need new types can omit this.
+    #   low_signal_types: tuple[str, ...]
+    #     Subset of `declared_types` (or any pack-injected type) that
+    #     core should hide from retrieval indexes (Profile / Catalog)
+    #     and doc-summary chunks. Use for retrieval-infra types produced
+    #     by `inject_structured` — numerics, aggregates, opaque IDs.
     #   extract_structured(metadata, content_md) -> dict | None
     #     Produce structured records (pack-specific schemas) for docs
     #     this pack knows how to parse. Returns a dict `{"kind": str, ...}`
     #     on match, None otherwise. Typically deterministic (regex /
     #     parser) — LLM-backed extractors pay an extra cost per doc.
+    #   async inject_structured(rag, result) -> dict
+    #     Write the records produced by `extract_structured` into the
+    #     graph. Pack owns its own node/edge schema — core never
+    #     inspects `result`; it just hands the dict back.
+    #   async summary_extras_for_doc(rag, doc_id) -> list[str]
+    #     Retrieval-friendly lines to splice into `doc_id`'s summary
+    #     chunk. One line per pack-produced aggregate / structured
+    #     highlight worth surfacing to the embedder.
 
     def matches(self, metadata: dict, content_md: str) -> bool:
         """True if this pack should handle the given ingested document.

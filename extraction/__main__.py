@@ -43,7 +43,6 @@ from extraction.graph import (
 )
 from extraction.diagnostics import trace_query
 from extraction.retrieval_enhance import write_doc_summary_chunks, write_index_nodes
-from extraction.structured import inject_transactions
 from extraction.provenance import extract_document_ids
 
 logger = logging.getLogger("extraction")
@@ -191,6 +190,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_enhance.add_argument("--store", type=Path, default=Path("store"))
     p_enhance.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_enhance.add_argument(
+        "--packs-dir", type=Path, default=None,
+        help=f"Packs directory (default: {DEFAULT_PACKS_DIR})",
+    )
+    p_enhance.add_argument(
+        "--no-packs", action="store_true",
+        help="Disable pack discovery (core-only summary extras)",
+    )
     p_enhance.add_argument("-v", "--verbose", action="store_true")
 
     p_idx = sub.add_parser(
@@ -201,6 +208,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_idx.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
     p_idx.add_argument("--min-docs-for-profile", type=int, default=2)
     p_idx.add_argument("--min-entities-for-catalog", type=int, default=2)
+    p_idx.add_argument(
+        "--packs-dir", type=Path, default=None,
+        help=f"Packs directory (default: {DEFAULT_PACKS_DIR})",
+    )
+    p_idx.add_argument(
+        "--no-packs", action="store_true",
+        help="Disable pack discovery (core low-signal types only)",
+    )
     p_idx.add_argument(
         "--dry-run", action="store_true",
         help="Print the plan without mutating the graph.",
@@ -401,8 +416,9 @@ async def _run_extract_structured(store_root: Path, working_dir: Path,
 
     corrections_root = _resolve_corrections_root(None, store_root)
 
-    # Collect structured output from every pack × doc pair.
-    all_transactions = []
+    # Collect (pack, result) pairs. Core never inspects `result`; it's
+    # opaque pack-owned data handed back to the pack for injection.
+    pack_results: list[tuple[object, dict]] = []
     per_doc_stats = []
     for md_path, meta in docs:
         raw = md_path.read_text(encoding="utf-8")
@@ -415,30 +431,33 @@ async def _run_extract_structured(store_root: Path, working_dir: Path,
             result = extractor(meta, content)
             if result is None:
                 continue
-            if result.get("kind") == "bank_statement":
-                txs = result.get("transactions", [])
-                all_transactions.extend(txs)
-                per_doc_stats.append({
-                    "document_id": meta["document_id"],
-                    "pack": pack.name,
-                    "kind": result["kind"],
-                    "count": len(txs),
-                })
+            pack_results.append((pack, result))
+            per_doc_stats.append({
+                "document_id": meta["document_id"],
+                "pack": pack.name,
+                "kind": result.get("kind", "unknown"),
+            })
 
     report = {
         "docs_scanned": len(docs),
-        "transactions_found": len(all_transactions),
+        "results_found": len(pack_results),
         "per_doc": per_doc_stats,
         "dry_run": dry_run,
     }
 
-    if not dry_run and all_transactions:
+    if not dry_run and pack_results:
         rag = await build_rag(working_dir=working_dir, config=config)
         try:
-            mutation = await inject_transactions(rag, all_transactions)
+            mutations: list[dict] = []
+            for pack, result in pack_results:
+                hook = getattr(pack, "inject_structured", None)
+                if not callable(hook):
+                    continue
+                m = await hook(rag, result)
+                mutations.append({"pack": pack.name, **m})
         finally:
             await rag.finalize_storages()
-        report["mutation"] = mutation
+        report["mutations"] = mutations
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
@@ -548,7 +567,8 @@ def _build_id_to_filename(store_root: Path) -> dict[str, str]:
     return mapping
 
 
-async def _run_enhance_retrieval(store_root: Path, working_dir: Path) -> int:
+async def _run_enhance_retrieval(store_root: Path, working_dir: Path,
+                                 packs_dir: Path | None, no_packs: bool) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
     config.require_api_key()
@@ -557,9 +577,11 @@ async def _run_enhance_retrieval(store_root: Path, working_dir: Path) -> int:
         print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
         return 1
 
+    packs = _load_packs(packs_dir, no_packs)
+
     rag = await build_rag(working_dir=working_dir, config=config)
     try:
-        report = await write_doc_summary_chunks(rag, store_root)
+        report = await write_doc_summary_chunks(rag, store_root, packs=packs)
     finally:
         await rag.finalize_storages()
 
@@ -569,7 +591,8 @@ async def _run_enhance_retrieval(store_root: Path, working_dir: Path) -> int:
 
 async def _run_build_indexes(store_root: Path, working_dir: Path,
                              min_docs: int, min_entities: int,
-                             dry_run: bool) -> int:
+                             dry_run: bool,
+                             packs_dir: Path | None, no_packs: bool) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
     config.require_api_key()
@@ -578,6 +601,8 @@ async def _run_build_indexes(store_root: Path, working_dir: Path,
         print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
         return 1
 
+    packs = _load_packs(packs_dir, no_packs)
+
     rag = await build_rag(working_dir=working_dir, config=config)
     try:
         report = await write_index_nodes(
@@ -585,6 +610,7 @@ async def _run_build_indexes(store_root: Path, working_dir: Path,
             min_docs_for_profile=min_docs,
             min_entities_for_catalog=min_entities,
             dry_run=dry_run,
+            packs=packs,
         )
     finally:
         await rag.finalize_storages()
@@ -775,12 +801,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "query":
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
     if args.cmd == "enhance-retrieval":
-        return asyncio.run(_run_enhance_retrieval(args.store, args.working_dir))
+        return asyncio.run(_run_enhance_retrieval(
+            args.store, args.working_dir, args.packs_dir, args.no_packs,
+        ))
     if args.cmd == "build-indexes":
         return asyncio.run(_run_build_indexes(
             args.store, args.working_dir,
             args.min_docs_for_profile, args.min_entities_for_catalog,
-            args.dry_run,
+            args.dry_run, args.packs_dir, args.no_packs,
         ))
     if args.cmd == "diagnose":
         return asyncio.run(_run_diagnose(
