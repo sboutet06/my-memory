@@ -11,12 +11,18 @@ extractors are layered in later phases when real needs surface.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
+
+from packs.personal_documents.router import (
+    detect_doc_kind,
+    extract_structured as _extract_structured,
+)
 
 
 @dataclass(frozen=True)
 class _PersonalDocumentsPack:
     name: str = "personal_documents"
-    version: str = "0.1.0"
+    version: str = "0.2.0"
 
     # Declared types — grouped by life domain for reviewability.
     # Changes to this list change the LLM's extraction prompt, which is
@@ -59,13 +65,22 @@ class _PersonalDocumentsPack:
     )
 
     def matches(self, metadata: dict, content_md: str) -> bool:
-        """V0 behavior: claim every document.
+        """Claim every document for the taxonomy-augmentation purpose.
 
-        The pack augments the extraction taxonomy corpus-wide; it does
-        not yet route per-document to pack-specific extractors. When
-        those exist (later phase), `matches` will become selective.
+        Structured extraction is routed separately via `extract_structured`
+        and returns None for docs the pack has no extractor for; no need
+        to gate here.
         """
         return True
+
+    def extract_structured(self, metadata: dict, content_md: str) -> Optional[dict]:
+        """Return structured records for docs this pack knows how to parse.
+
+        Shape:
+            {"kind": "<known_kind>", "<kind>_key": [Record, ...]}
+        or None when no extractor matches.
+        """
+        return _extract_structured(metadata, content_md)
 
 
 PACK = _PersonalDocumentsPack()

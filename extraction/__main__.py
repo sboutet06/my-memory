@@ -41,6 +41,7 @@ from extraction.graph import (
     resolve_aliases,
     snapshot_nodes,
 )
+from extraction.structured import inject_transactions
 from extraction.provenance import extract_document_ids
 
 logger = logging.getLogger("extraction")
@@ -146,6 +147,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Alias-cluster cosine threshold (dry-run only)",
     )
     p_emit.add_argument("-v", "--verbose", action="store_true")
+
+    p_struct = sub.add_parser(
+        "extract-structured",
+        help="Run pack extract_structured() on every doc and inject records into the graph",
+    )
+    p_struct.add_argument("--store", type=Path, default=Path("store"))
+    p_struct.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_struct.add_argument(
+        "--packs-dir", type=Path, default=None,
+        help=f"Packs directory (default: {DEFAULT_PACKS_DIR})",
+    )
+    p_struct.add_argument(
+        "--no-packs", action="store_true",
+        help="Disable pack discovery",
+    )
+    p_struct.add_argument(
+        "--dry-run", action="store_true",
+        help="Count what would be injected without writing to the graph",
+    )
+    p_struct.add_argument("-v", "--verbose", action="store_true")
 
     p_apply = sub.add_parser(
         "apply-corrections",
@@ -301,6 +322,68 @@ async def _run_dedupe(working_dir: Path, threshold: float, apply: bool,
     }
     # Drop the raw groups from the summary now that they're persisted.
     report.pop("ambiguous_groups", None)
+
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+async def _run_extract_structured(store_root: Path, working_dir: Path,
+                                  packs_dir: Path | None, no_packs: bool,
+                                  dry_run: bool) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    packs = _load_packs(packs_dir, no_packs)
+    if not packs:
+        print("No packs active — nothing to do.", file=sys.stderr)
+        return 1
+
+    docs = discover_store_docs(store_root)
+    if not docs:
+        print(f"No ingested docs under {store_root}.", file=sys.stderr)
+        return 1
+
+    # Collect structured output from every pack × doc pair.
+    all_transactions = []
+    per_doc_stats = []
+    for md_path, meta in docs:
+        content = md_path.read_text(encoding="utf-8")
+        for pack in packs:
+            extractor = getattr(pack, "extract_structured", None)
+            if not callable(extractor):
+                continue
+            result = extractor(meta, content)
+            if result is None:
+                continue
+            if result.get("kind") == "bank_statement":
+                txs = result.get("transactions", [])
+                all_transactions.extend(txs)
+                per_doc_stats.append({
+                    "document_id": meta["document_id"],
+                    "pack": pack.name,
+                    "kind": result["kind"],
+                    "count": len(txs),
+                })
+
+    report = {
+        "docs_scanned": len(docs),
+        "transactions_found": len(all_transactions),
+        "per_doc": per_doc_stats,
+        "dry_run": dry_run,
+    }
+
+    if not dry_run and all_transactions:
+        rag = await build_rag(working_dir=working_dir, config=config)
+        try:
+            mutation = await inject_transactions(rag, all_transactions)
+        finally:
+            await rag.finalize_storages()
+        report["mutation"] = mutation
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
@@ -464,6 +547,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "apply-corrections":
         return asyncio.run(_run_apply_corrections(
             args.working_dir, args.corrections_root, args.apply,
+        ))
+    if args.cmd == "extract-structured":
+        return asyncio.run(_run_extract_structured(
+            args.store, args.working_dir, args.packs_dir, args.no_packs,
+            args.dry_run,
         ))
     if args.cmd == "query":
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
