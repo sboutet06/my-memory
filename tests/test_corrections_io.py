@@ -58,6 +58,17 @@ class TestRoundtrip:
     def test_load_missing_returns_none(self, tmp_path: Path) -> None:
         assert load_source_correction(tmp_path, "nope") is None
 
+    def test_yaml_includes_hint_comments(self, tmp_path: Path) -> None:
+        c = _correction(doubts=[_doubt()])
+        save_source_correction(tmp_path, c)
+        raw = correction_path(tmp_path, c.document_id).read_text()
+        # Every user-editable field has an inline hint with allowed values.
+        assert "pending | reviewed" in raw
+        assert "another document_id" in raw
+        assert "document_date" in raw and "extraction_quality" in raw
+        assert "find" in raw and "replace" in raw
+        assert "obsolete" in raw  # tags hint
+
     def test_yaml_is_human_readable(self, tmp_path: Path) -> None:
         c = _correction(doubts=[_doubt("document_date", "2016-05-13")])
         save_source_correction(tmp_path, c)
