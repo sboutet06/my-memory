@@ -319,6 +319,81 @@ async def resolve_aliases(
     }
 
 
+async def apply_derivation_plan(rag: LightRAG, plan) -> dict:
+    """Execute a derivation Plan against the persisted graph.
+
+    `plan` is a `corrections.derivation_applier.Plan`. Kept untyped here
+    so `extraction.graph` doesn't import from `corrections`.
+
+    Order:
+      1. Entity-type rewrites — node `entity_type` reassigned in place.
+      2. Merge ops — run via LightRAG's `amerge_entities`, which
+         re-points edges and unions provenance/source fields.
+
+    Idempotent: a TypeChange whose new_type already matches the stored
+    node is a no-op; a MergeOp whose `sources` are already absent (prior
+    run merged them) is a no-op.
+    """
+    kg = rag.chunk_entity_relation_graph
+
+    types_applied = 0
+    types_skipped = 0
+    for change in plan.type_changes:
+        node = await kg.get_node(change.name)
+        if node is None:
+            types_skipped += 1
+            continue
+        if (node.get("entity_type") or "") == change.new_type:
+            types_skipped += 1
+            continue
+        node["entity_type"] = change.new_type
+        await kg.upsert_node(change.name, node)
+        types_applied += 1
+
+    merges_applied = 0
+    merges_skipped = 0
+    merge_errors: list[str] = []
+    for op in plan.merge_ops:
+        # Drop sources already absent (idempotency on re-run).
+        live_sources = []
+        for s in op.sources:
+            if await kg.get_node(s) is not None:
+                live_sources.append(s)
+        if not live_sources:
+            merges_skipped += 1
+            continue
+        if await kg.get_node(op.canonical) is None:
+            merges_errors_append = f"canonical {op.canonical!r} missing; skipping merge"
+            merge_errors.append(merges_errors_append)
+            continue
+        try:
+            await rag.amerge_entities(
+                source_entities=live_sources,
+                target_entity=op.canonical,
+                merge_strategy={
+                    "description": "concatenate",
+                    "entity_type": "keep_first",
+                    "source_id": "join_unique",
+                    "file_path": "join_unique",
+                    "document_ids": "join_unique",
+                },
+            )
+            merges_applied += 1
+        except Exception as exc:
+            merge_errors.append(f"merge {op.canonical} ← {live_sources}: {exc}")
+
+    if types_applied or merges_applied:
+        await kg.index_done_callback()
+
+    return {
+        "types_applied": types_applied,
+        "types_skipped": types_skipped,
+        "merges_applied": merges_applied,
+        "merges_skipped": merges_skipped,
+        "merge_errors": merge_errors,
+    }
+
+
 async def snapshot_nodes(rag: LightRAG) -> dict[str, dict]:
     """Return `{name: node_dict}` for every entity in the graph.
 

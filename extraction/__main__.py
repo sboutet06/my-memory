@@ -11,11 +11,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from lightrag import QueryParam
 
+from corrections.derivation_applier import build_plan
 from corrections.derivation_emitter import (
     emit_alias_corrections,
     emit_entity_type_buckets,
 )
 from corrections.derivation_io import (
+    list_alias_corrections,
+    list_entity_type_buckets,
     load_alias_correction,
     load_entity_type_bucket,
     merge_alias_correction,
@@ -28,6 +31,7 @@ from extraction.alias import DEFAULT_THRESHOLD
 from extraction.graph import (
     DEFAULT_WORKING_DIR,
     annotate_temporal,
+    apply_derivation_plan,
     build_rag,
     discover_store_docs,
     extract_documents,
@@ -106,6 +110,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Alias-cluster cosine threshold (dry-run only)",
     )
     p_emit.add_argument("-v", "--verbose", action="store_true")
+
+    p_apply = sub.add_parser(
+        "apply-corrections",
+        help="Execute user-reviewed derivation corrections against the graph",
+    )
+    p_apply.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_apply.add_argument(
+        "--corrections-root", type=Path, default=None,
+        help="Corrections root (default: <working-dir>/../corrections)",
+    )
+    p_apply.add_argument(
+        "--apply", action="store_true",
+        help="Actually mutate the graph (default: dry-run, print the plan)",
+    )
+    p_apply.add_argument("-v", "--verbose", action="store_true")
 
     p_query = sub.add_parser("query", help="Query the extracted knowledge graph")
     p_query.add_argument("question", type=str, help="Natural-language question")
@@ -279,6 +298,56 @@ async def _run_emit_corrections(working_dir: Path, corrections_root: Path | None
     return 0
 
 
+def _plan_to_dict(plan) -> dict:
+    return {
+        "type_changes": [
+            {"name": c.name, "old_type": c.old_type, "new_type": c.new_type}
+            for c in plan.type_changes
+        ],
+        "merge_ops": [
+            {"canonical": op.canonical, "sources": list(op.sources)}
+            for op in plan.merge_ops
+        ],
+        "warnings": plan.warnings,
+    }
+
+
+async def _run_apply_corrections(working_dir: Path, corrections_root: Path | None,
+                                 apply: bool) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    resolved_corr = _resolve_corrections_root(corrections_root, working_dir)
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        snapshot = await snapshot_nodes(rag)
+        buckets = list_entity_type_buckets(resolved_corr)
+        aliases = list_alias_corrections(resolved_corr)
+        plan = build_plan(snapshot, buckets=buckets, aliases=aliases)
+
+        report = {
+            "corrections_root": str(resolved_corr),
+            "dry_run": not apply,
+            "plan": _plan_to_dict(plan),
+            "summary": plan.summary(),
+        }
+
+        if apply and not plan.is_empty():
+            mutation = await apply_derivation_plan(rag, plan)
+            report["mutation"] = mutation
+    finally:
+        await rag.finalize_storages()
+
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
 async def _run_query(question: str, mode: str, working_dir: Path, as_json: bool) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
@@ -345,6 +414,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "emit-corrections":
         return asyncio.run(_run_emit_corrections(
             args.working_dir, args.corrections_root, args.threshold,
+        ))
+    if args.cmd == "apply-corrections":
+        return asyncio.run(_run_apply_corrections(
+            args.working_dir, args.corrections_root, args.apply,
         ))
     if args.cmd == "query":
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
