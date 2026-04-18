@@ -41,6 +41,7 @@ from extraction.graph import (
     resolve_aliases,
     snapshot_nodes,
 )
+from extraction.diagnostics import trace_query
 from extraction.structured import inject_transactions
 from extraction.provenance import extract_document_ids
 
@@ -182,6 +183,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually mutate the graph (default: dry-run, print the plan)",
     )
     p_apply.add_argument("-v", "--verbose", action="store_true")
+
+    p_diag = sub.add_parser(
+        "diagnose",
+        help="Trace retrieval stages for a question (no LLM call, read-only)",
+    )
+    p_diag.add_argument("question", type=str)
+    p_diag.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_diag.add_argument("--top-k", type=int, default=30)
+    p_diag.add_argument("--rerank-top-k", type=int, default=20)
+    p_diag.add_argument("--full", action="store_true",
+                        help="Include full hit payloads (default: summary counts)")
+    p_diag.add_argument("--expected-docs", type=str, default=None,
+                        help="Comma-separated filename-prefix list to track retention")
+    p_diag.add_argument("--store", type=Path, default=Path("store"))
+    p_diag.add_argument("-v", "--verbose", action="store_true")
+
+    p_corpus = sub.add_parser(
+        "diagnose-corpus",
+        help="Corpus stats — counts per entity type, degree, chunks per doc",
+    )
+    p_corpus.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_corpus.add_argument("-v", "--verbose", action="store_true")
 
     p_query = sub.add_parser("query", help="Query the extracted knowledge graph")
     p_query.add_argument("question", type=str, help="Natural-language question")
@@ -483,6 +506,125 @@ async def _run_apply_corrections(working_dir: Path, corrections_root: Path | Non
     return 0
 
 
+def _build_id_to_filename(store_root: Path) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    if not store_root.exists():
+        return mapping
+    for entry in sorted(store_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        mp = entry / "metadata.json"
+        if not mp.is_file():
+            continue
+        try:
+            m = json.loads(mp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if "document_id" in m and "original_filename" in m:
+            mapping[m["document_id"]] = m["original_filename"]
+    return mapping
+
+
+async def _run_diagnose(question: str, working_dir: Path, top_k: int,
+                        rerank_top_k: int, full: bool,
+                        expected_docs: str | None, store_root: Path) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    id_to_filename = _build_id_to_filename(store_root)
+    expected_list = [p.strip() for p in (expected_docs or "").split(",") if p.strip()]
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        trace = await trace_query(
+            rag, question,
+            top_k=top_k, rerank_top_k=rerank_top_k,
+            expected_documents=expected_list,
+            id_to_filename=id_to_filename,
+        )
+    finally:
+        await rag.finalize_storages()
+
+    if full:
+        report = {
+            "question": trace.question,
+            "expected_documents": trace.expected_documents,
+            "stages": [
+                {
+                    "stage": s.stage,
+                    "hit_count": len(s.hits),
+                    "expected_seen": s.expected_docs_seen,
+                    "expected_missing": s.expected_docs_missing,
+                    "hits": s.hits[:10],   # cap for readability
+                }
+                for s in trace.stages
+            ],
+        }
+    else:
+        report = trace.summary()
+    print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+    return 0
+
+
+async def _run_diagnose_corpus(working_dir: Path) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    from collections import Counter, defaultdict
+    from extraction.provenance import parse_document_ids
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        kg = rag.chunk_entity_relation_graph
+        labels = await kg.get_all_labels()
+        type_count: Counter = Counter()
+        type_degrees: dict[str, list[int]] = defaultdict(list)
+        type_docs_touched: dict[str, set] = defaultdict(set)
+        docs_touched_overall: set = set()
+        for name in labels:
+            node = await kg.get_node(name)
+            if node is None:
+                continue
+            t = node.get("entity_type") or "null"
+            type_count[t] += 1
+            edges = await kg.get_node_edges(name) or []
+            type_degrees[t].append(len(edges))
+            doc_ids = parse_document_ids(node.get("document_ids"))
+            for d in doc_ids:
+                type_docs_touched[t].add(d)
+                docs_touched_overall.add(d)
+    finally:
+        await rag.finalize_storages()
+
+    rows = []
+    for t, n in sorted(type_count.items(), key=lambda x: -x[1]):
+        degrees = type_degrees[t]
+        rows.append({
+            "type": t,
+            "entities": n,
+            "mean_degree": round(sum(degrees) / len(degrees), 2) if degrees else 0.0,
+            "isolated": sum(1 for d in degrees if d == 0),
+            "docs_with_type": len(type_docs_touched[t]),
+        })
+    report = {
+        "total_entities": sum(type_count.values()),
+        "total_docs_with_entities": len(docs_touched_overall),
+        "types": rows,
+    }
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
 async def _run_query(question: str, mode: str, working_dir: Path, as_json: bool) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
@@ -564,6 +706,13 @@ def main(argv: list[str] | None = None) -> int:
         ))
     if args.cmd == "query":
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
+    if args.cmd == "diagnose":
+        return asyncio.run(_run_diagnose(
+            args.question, args.working_dir, args.top_k, args.rerank_top_k,
+            args.full, args.expected_docs, args.store,
+        ))
+    if args.cmd == "diagnose-corpus":
+        return asyncio.run(_run_diagnose_corpus(args.working_dir))
 
     parser.error(f"Unknown command: {args.cmd}")
     return 2

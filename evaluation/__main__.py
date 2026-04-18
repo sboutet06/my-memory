@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from evaluation.aggregate import aggregate_runs
-from evaluation.runner import run_all, run_all_multi, summarize
+from evaluation.runner import build_doc_id_to_filename, run_all, run_all_multi, summarize
 from evaluation.schema import load_cases
 from extraction.graph import DEFAULT_WORKING_DIR
 
@@ -35,6 +35,64 @@ def _fmt_agg(agg) -> str:
     )
 
 
+async def _run_diagnose(cases_path: Path, store_root: Path, working_dir: Path,
+                        only_case: str | None) -> int:
+    """Per-case retrieval trace — no LLM call, read-only.
+
+    Shows, per eval case, which expected documents survive each retrieval
+    stage (entity_vdb, chunks_vdb, relationships_vdb, rerank). Zero
+    behavior change; pure instrumentation for Phase 5.1.
+    """
+    import json as _json
+    from dotenv import load_dotenv
+
+    from extraction.config import ExtractionConfig
+    from extraction.diagnostics import trace_query
+    from extraction.graph import build_rag
+
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    cases = load_cases(cases_path)
+    if only_case:
+        cases = [c for c in cases if c.id == only_case]
+        if not cases:
+            print(f"No case with id={only_case!r}", file=sys.stderr)
+            return 2
+
+    id_to_filename = build_doc_id_to_filename(store_root)
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    reports = []
+    try:
+        for case in cases:
+            trace = await trace_query(
+                rag, case.question,
+                expected_documents=list(case.expected_documents),
+                id_to_filename=id_to_filename,
+            )
+            reports.append({
+                "case_id": case.id,
+                "question": case.question,
+                "expected_documents": list(case.expected_documents),
+                "stages": [
+                    {
+                        "stage": s.stage,
+                        "hits": len(s.hits),
+                        "expected_seen": s.expected_docs_seen,
+                        "expected_missing": s.expected_docs_missing,
+                    }
+                    for s in trace.stages
+                ],
+            })
+    finally:
+        await rag.finalize_storages()
+
+    print(_json.dumps({"cases": reports}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evaluation")
     parser.add_argument(
@@ -53,6 +111,15 @@ def main(argv: list[str] | None = None) -> int:
         "--json", action="store_true",
         help="Emit full JSON (otherwise summary + per-case one-liners).",
     )
+    parser.add_argument(
+        "--diagnose", action="store_true",
+        help="Retrieval-stage diagnostics mode: trace per-stage retention "
+             "of expected_documents for each case. No LLM call, read-only.",
+    )
+    parser.add_argument(
+        "--case", type=str, default=None,
+        help="With --diagnose: only trace this case id.",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -60,6 +127,11 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    if args.diagnose:
+        return asyncio.run(_run_diagnose(
+            args.cases, args.store, args.working_dir, args.case,
+        ))
 
     cases = load_cases(args.cases)
 
