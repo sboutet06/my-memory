@@ -5,9 +5,20 @@ import logging
 import time
 from pathlib import Path
 
+from corrections.io import (
+    load_source_correction,
+    merge_emitted_doubts,
+    save_source_correction,
+)
+from corrections.source_emitter import emit_doubts_for_metadata
 from ingestion.document_date import detect_document_date
 from ingestion.metadata import build_metadata, compute_sha256, detect_mime_type
-from ingestion.models import ExtractionQuality, IngestionResult, IngestionStatus
+from ingestion.models import (
+    DocumentMetadata,
+    ExtractionQuality,
+    IngestionResult,
+    IngestionStatus,
+)
 from ingestion.quality import assess_quality, render_fallback_markdown
 from ingestion.storage import find_duplicate, persist_document
 
@@ -19,6 +30,7 @@ class UnsupportedFormatError(RuntimeError):
 
 
 DEFAULT_STORE_ROOT = Path("store")
+DEFAULT_CORRECTIONS_ROOT = Path("corrections")
 
 # Docling-supported extensions (mapped from `InputFormat`), plus common image types.
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({
@@ -50,11 +62,37 @@ def _run_docling(path: Path) -> tuple[dict, str, int]:
     return doc.export_to_dict(), doc.export_to_markdown(), duration_ms
 
 
+def _emit_source_corrections(
+    corrections_root: Path,
+    metadata: DocumentMetadata,
+) -> None:
+    """Write/merge a correction file iff the emitter produces doubts."""
+    doubts = emit_doubts_for_metadata(metadata)
+    if not doubts:
+        return
+    existing = load_source_correction(corrections_root, metadata.document_id)
+    merged = merge_emitted_doubts(
+        existing=existing,
+        emitted=doubts,
+        document_id=metadata.document_id,
+        original_filename=metadata.original_filename,
+    )
+    save_source_correction(corrections_root, merged)
+    logger.info(
+        "Wrote %d doubt(s) for %s → %s/source/%s.yaml",
+        len(doubts), metadata.document_id, corrections_root, metadata.document_id,
+    )
+
+
 def ingest_document(
     file_path: Path,
     *,
     store_root: Path = DEFAULT_STORE_ROOT,
+    corrections_root: Path | None = None,
 ) -> IngestionResult:
+    if corrections_root is None:
+        # Sibling of store_root — keeps test tmpdirs self-contained.
+        corrections_root = Path(store_root).parent / "corrections"
     """Ingest one file: hash → dedup → docling → persist.
 
     Idempotent: a second call with the same file returns `DUPLICATE` pointing at
@@ -80,6 +118,7 @@ def ingest_document(
     existing = find_duplicate(store_root, content_hash)
     if existing is not None:
         logger.info("Duplicate of %s (hash %s…)", existing.document_id, content_hash[:12])
+        _emit_source_corrections(corrections_root, existing)
         return IngestionResult(
             status=IngestionStatus.DUPLICATE,
             document_id=existing.document_id,
@@ -125,6 +164,8 @@ def ingest_document(
     except Exception as exc:
         logger.exception("Persistence failed for %s", file_path.name)
         return IngestionResult(status=IngestionStatus.FAILED, message=str(exc))
+
+    _emit_source_corrections(corrections_root, metadata)
 
     logger.info(
         "Ingested %s → %s (%d ms, %d bytes, quality=%s)",
