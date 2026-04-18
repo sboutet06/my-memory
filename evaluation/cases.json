@@ -58,7 +58,7 @@
       "notes": "Tests the new `medication` / `procedure` pack types. Ordonnance Gabriel + Ordonnances Cabinet Urologie are the two prescription docs.",
       "expected_documents": ["Ordonnance Gabriel", "Ordonnances Cabinet Urologie"],
       "expected_entities": [],
-      "expected_facts": ["ordonnance"],
+      "expected_facts": ["ordonnance|prescription"],
       "forbidden_facts": []
     },
     {

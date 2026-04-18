@@ -130,9 +130,75 @@ def inject_references(answer: str, refs: Iterable[Reference]) -> str:
     return f"{stripped}\n\n{block}"
 
 
+def _expand_from_index_entities(
+    entities: Iterable[Mapping], *, start_id: int,
+) -> list[Reference]:
+    """Phase 5.7: pull `/store/<uuid>/` doc_ids out of every Profile/Catalog
+    entity's description and return them as additional references.
+
+    LightRAG builds `data.references` purely from retrieved chunks. Profile
+    and Catalog nodes (synthetic, created by `write_index_nodes`) embed
+    `/store/<uuid>/content.md` paths for every member doc in their
+    description — when one is retrieved, those member docs are in the
+    LLM's context but not in the chunks-derived reference list.
+
+    This function extracts those paths so the canonical References block
+    names them too, letting the provenance regex score doc_coverage on the
+    breadth the Profile actually conveys.
+    """
+    out: list[Reference] = []
+    seen: set[str] = set()
+    next_id = start_id
+    for ent in entities or ():
+        if not isinstance(ent, Mapping):
+            continue
+        name = str(ent.get("entity_name") or "")
+        if not (name.startswith("Profile: ") or name.startswith("Catalog: ")):
+            continue
+        desc = str(ent.get("description") or "")
+        for doc_id in extract_document_ids(desc):
+            if doc_id in seen:
+                continue
+            seen.add(doc_id)
+            out.append(Reference(
+                reference_id=str(next_id),
+                file_path=f"/store/{doc_id}/content.md",
+                doc_id=doc_id,
+            ))
+            next_id += 1
+    return out
+
+
+def _merge_refs(primary: list[Reference], extra: list[Reference]) -> list[Reference]:
+    """Append refs from `extra` that bring new doc_ids. Preserves `primary`
+    order and reference_ids; skips `extra` entries whose doc_id is already
+    represented in `primary`.
+    """
+    seen_docs: set[str] = {r.doc_id for r in primary if r.doc_id}
+    out = list(primary)
+    for r in extra:
+        if r.doc_id and r.doc_id in seen_docs:
+            continue
+        if r.doc_id:
+            seen_docs.add(r.doc_id)
+        out.append(r)
+    return out
+
+
 def extract_references_from_query_result(result: Mapping) -> list[Reference]:
-    """Convenience: pull `data.references` out of LightRAG's `aquery_llm` dict."""
+    """Pull LightRAG's chunks-derived `data.references` list and expand it
+    with Profile/Catalog entity descriptions' `/store/<uuid>/` paths
+    (Phase 5.7). Chunks-only references miss broad-coverage Profiles.
+    """
     data = result.get("data") if isinstance(result, Mapping) else None
     if not isinstance(data, Mapping):
         return []
-    return parse_references(data.get("references"))
+    primary = parse_references(data.get("references"))
+    # Start expansion ids after the chunks' sequential ids so the indices
+    # remain stable-ordered and predictable.
+    start = 1 + max(
+        (int(r.reference_id) for r in primary if r.reference_id.isdigit()),
+        default=0,
+    )
+    extra = _expand_from_index_entities(data.get("entities") or [], start_id=start)
+    return _merge_refs(primary, extra)

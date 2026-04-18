@@ -156,3 +156,115 @@ class TestExtractReferencesFromQueryResult:
         assert extract_references_from_query_result({}) == []
         assert extract_references_from_query_result({"data": None}) == []
         assert extract_references_from_query_result({"data": {}}) == []
+
+
+V4_C = "3aa2c3f8-411b-4bcf-bddd-571218002ce7"
+V4_D = "eec9507c-1d09-4bfa-b8e5-8792fdf9eaf3"
+
+
+class TestPhase57ProfileExpansion:
+    def test_profile_description_docs_are_merged_into_refs(self) -> None:
+        # Chunks-derived refs have only V4_A; a retrieved Profile entity
+        # lists V4_A, V4_B, V4_C in its description. Merged result should
+        # have all three.
+        result = {
+            "data": {
+                "references": [_raw("1", V4_A)],
+                "entities": [
+                    {
+                        "entity_name": f"Profile: Sébastien Boutet",
+                        "description": (
+                            f"Profile of Sébastien Boutet. Appears in 3 docs:\n"
+                            f"  - /store/{V4_A}/content.md (x.pdf)\n"
+                            f"  - /store/{V4_B}/content.md (y.pdf)\n"
+                            f"  - /store/{V4_C}/content.md (z.pdf)\n"
+                        ),
+                    },
+                ],
+            },
+        }
+        refs = extract_references_from_query_result(result)
+        doc_ids = [r.doc_id for r in refs]
+        assert V4_A in doc_ids
+        assert V4_B in doc_ids
+        assert V4_C in doc_ids
+        # Chunks-primary ref keeps reference_id=1; new ones follow.
+        primary = next(r for r in refs if r.doc_id == V4_A)
+        assert primary.reference_id == "1"
+
+    def test_catalog_entity_is_also_expanded(self) -> None:
+        result = {
+            "data": {
+                "references": [],
+                "entities": [
+                    {
+                        "entity_name": "Catalog: vehicle",
+                        "description": (
+                            f"Catalog of vehicle.\n"
+                            f"  - Zoé [/store/{V4_A}/content.md]\n"
+                            f"  - KIA [/store/{V4_B}/content.md]\n"
+                        ),
+                    },
+                ],
+            },
+        }
+        refs = extract_references_from_query_result(result)
+        assert {r.doc_id for r in refs} == {V4_A, V4_B}
+
+    def test_non_profile_non_catalog_entity_ignored(self) -> None:
+        result = {
+            "data": {
+                "references": [],
+                "entities": [
+                    {
+                        "entity_name": "Some Person",
+                        "description": f"Lives at /store/{V4_A}/content.md",
+                    },
+                ],
+            },
+        }
+        assert extract_references_from_query_result(result) == []
+
+    def test_does_not_duplicate_doc_in_primary(self) -> None:
+        """A Profile's doc that's already in chunks_refs stays at its
+        original reference_id; extras only add NEW doc_ids."""
+        result = {
+            "data": {
+                "references": [_raw("1", V4_A), _raw("2", V4_B)],
+                "entities": [
+                    {
+                        "entity_name": "Profile: X",
+                        "description": (
+                            f"Appears in /store/{V4_A}/content.md and "
+                            f"/store/{V4_B}/content.md and "
+                            f"/store/{V4_C}/content.md."
+                        ),
+                    },
+                ],
+            },
+        }
+        refs = extract_references_from_query_result(result)
+        # No duplicates; V4_C appended with id starting ≥3.
+        doc_ids = [r.doc_id for r in refs]
+        assert doc_ids.count(V4_A) == 1
+        assert doc_ids.count(V4_B) == 1
+        assert V4_C in doc_ids
+
+    def test_inject_exposes_expanded_doc_ids_for_scoring(self) -> None:
+        """End-to-end: answer with expanded refs contains all doc_ids so
+        `extract_document_ids` finds them."""
+        result = {
+            "data": {
+                "references": [_raw("1", V4_A)],
+                "entities": [
+                    {
+                        "entity_name": "Profile: Sébastien",
+                        "description": f"/store/{V4_B}/content.md",
+                    },
+                ],
+            },
+        }
+        refs = extract_references_from_query_result(result)
+        answer = inject_references("Sébastien appears in multiple docs.", refs)
+        assert f"/store/{V4_A}/content.md" in answer
+        assert f"/store/{V4_B}/content.md" in answer

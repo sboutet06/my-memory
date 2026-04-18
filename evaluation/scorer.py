@@ -1,10 +1,35 @@
-"""Pure scoring functions. No network, no LLM, deterministic."""
+"""Pure scoring functions. No network, no LLM, deterministic.
+
+Matching semantics (entity/fact/forbidden):
+- Accent-insensitive: NFKD decomposition strips combining marks, so
+  `Zoé` matches `Zoe` and `ingénieur` matches `ingenieur`. This avoids
+  brittle false-negatives on common French-accent drift between source
+  text, LLM paraphrase, and eval fixtures.
+- Case-insensitive: lowercase both sides.
+- OR alternatives: an expected entry containing `|` is split and each
+  alternative is tested in turn — any match counts the entry as
+  satisfied. Addresses synonym drift (`ordonnance|prescription`).
+"""
 from __future__ import annotations
 
 import unicodedata
 from typing import Iterable
 
 
+def _fold(s: str) -> str:
+    """NFKD decompose → strip combining marks → lowercase → trim.
+
+    `é` (U+00E9) → `e` + U+0301 → `e`. Same output for NFC and NFD
+    inputs, makes matching immune to OS filesystem normalization,
+    accent drift, and case.
+    """
+    decomposed = unicodedata.normalize("NFKD", s)
+    no_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return no_marks.strip().lower()
+
+
+# Kept for callers that need simple case-insensitive comparison without
+# accent folding; scoring functions use `_fold` internally.
 def _norm(s: str) -> str:
     return s.strip().lower()
 
@@ -15,6 +40,15 @@ def _nfc(s: str) -> str:
     (U+0065 + U+0301) compare unequal even though they display identically.
     """
     return unicodedata.normalize("NFC", s)
+
+
+def _alternatives(raw: str) -> list[str]:
+    """Split on `|` to support OR alternatives in expected entries.
+
+    Empty alternatives dropped. `"ordonnance|prescription"` →
+    ["ordonnance", "prescription"]; `"single"` → ["single"].
+    """
+    return [p.strip() for p in raw.split("|") if p.strip()]
 
 
 def score_document_coverage(
@@ -40,22 +74,38 @@ def _substring_coverage(terms: Iterable[str], haystack: str) -> float:
     terms = [t for t in terms if t and t.strip()]
     if not terms:
         return 1.0
-    hay = _norm(haystack)
-    hits = sum(1 for t in terms if _norm(t) in hay)
+    hay = _fold(haystack)
+    # Each entry counts if ANY of its `|`-separated alternatives appears.
+    hits = 0
+    for entry in terms:
+        alts = _alternatives(entry) or [entry]
+        if any(_fold(alt) in hay for alt in alts):
+            hits += 1
     return hits / len(terms)
 
 
 def score_entity_coverage(expected_entities: Iterable[str], answer: str) -> float:
-    """Case-insensitive substring match. 1.0 when all expected appear."""
+    """Accent+case-insensitive substring match with `|` OR alternatives."""
     return _substring_coverage(expected_entities, answer)
 
 
 def score_fact_coverage(expected_facts: Iterable[str], answer: str) -> float:
-    """Case-insensitive substring match. 1.0 when all expected appear."""
+    """Accent+case-insensitive substring match with `|` OR alternatives."""
     return _substring_coverage(expected_facts, answer)
 
 
 def count_forbidden(forbidden: Iterable[str], answer: str) -> int:
-    """Number of forbidden terms that appear in the answer. Term-level count."""
-    hay = _norm(answer)
-    return sum(1 for t in forbidden if t and _norm(t) in hay)
+    """Number of forbidden entries present in the answer. Term-level count.
+
+    Entries may use `|` for OR — if any alternative is present, the entry
+    counts as one violation.
+    """
+    hay = _fold(answer)
+    violations = 0
+    for entry in forbidden:
+        if not entry:
+            continue
+        alts = _alternatives(entry) or [entry]
+        if any(_fold(alt) in hay for alt in alts):
+            violations += 1
+    return violations

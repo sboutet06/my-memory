@@ -42,6 +42,33 @@ def test_doc_coverage_nfc_matches_nfd_filenames() -> None:
     assert score_document_coverage([nfc_prefix], [nfd_filename]) == 1.0
 
 
+# -- accent-folding + OR alternatives -------------------------------------
+
+def test_entity_accent_insensitive() -> None:
+    # Expected `Zoé` should match `Zoe` in the answer (common LLM drift).
+    assert score_entity_coverage(["Zoé"], "Le véhicule Zoe est électrique.") == 1.0
+
+
+def test_fact_accent_insensitive() -> None:
+    assert score_fact_coverage(["ingénieur"], "Statut Cadre Ingenieur") == 1.0
+
+
+def test_fact_or_alternative_matches() -> None:
+    # `ordonnance|prescription` — LLM may use either word.
+    assert score_fact_coverage(["ordonnance|prescription"], "Liste des prescriptions") == 1.0
+    assert score_fact_coverage(["ordonnance|prescription"], "Voici l'ordonnance") == 1.0
+
+
+def test_fact_or_alternative_no_match_scores_zero() -> None:
+    assert score_fact_coverage(["ordonnance|prescription"], "Rien à voir") == 0.0
+
+
+def test_forbidden_or_alternative_counts_one_violation() -> None:
+    # `x|y` — one entry, one violation if any alt present.
+    assert count_forbidden(["Mougins|Grasse"], "Lives in Mougins.") == 1
+    assert count_forbidden(["Mougins|Grasse"], "Clean answer.") == 0
+
+
 # -- entity / fact coverage (substring, case-insensitive) -----------------
 
 def test_entity_coverage_case_insensitive() -> None:
