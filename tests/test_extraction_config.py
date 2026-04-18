@@ -79,3 +79,13 @@ def test_temporal_user_prompt_has_generic_default() -> None:
 def test_temporal_user_prompt_overridable() -> None:
     cfg = ExtractionConfig.from_env({"EXTRACTION_TEMPORAL_USER_PROMPT": "Answer briefly."})
     assert cfg.temporal_user_prompt == "Answer briefly."
+
+
+def test_temperature_default_is_zero_for_reproducibility() -> None:
+    cfg = ExtractionConfig.from_env({})
+    assert cfg.temperature == 0.0
+
+
+def test_temperature_overridable_via_env() -> None:
+    cfg = ExtractionConfig.from_env({"EXTRACTION_TEMPERATURE": "0.7"})
+    assert cfg.temperature == 0.7

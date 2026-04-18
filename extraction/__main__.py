@@ -78,6 +78,7 @@ def _config_with_packs(config: ExtractionConfig, packs: list) -> ExtractionConfi
         base_url=config.base_url,
         entity_types=types,
         temporal_user_prompt=config.temporal_user_prompt,
+        temperature=config.temperature,
     )
 
 

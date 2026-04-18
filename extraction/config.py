@@ -32,6 +32,10 @@ _DEFAULT_EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12
 _DEFAULT_EMBED_DIM = 384
 _DEFAULT_LANGUAGE = "auto"
 _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+# 0.0 keeps extraction + queries reproducible across runs (see commit
+# cfa7da8). Override only for sampling experiments — eval metrics lose
+# their measurable floor at temperature > 0.
+_DEFAULT_TEMPERATURE = 0.0
 
 # Default guidance appended at query time. Generic over any time-varying
 # attribute so the graph can say something sensible about addresses,
@@ -94,6 +98,7 @@ class ExtractionConfig:
     base_url: str = _DEFAULT_BASE_URL
     entity_types: list[str] = field(default_factory=lambda: list(_DEFAULT_ENTITY_TYPES))
     temporal_user_prompt: str = _DEFAULT_TEMPORAL_USER_PROMPT
+    temperature: float = _DEFAULT_TEMPERATURE
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ExtractionConfig":
@@ -111,6 +116,7 @@ class ExtractionConfig:
             temporal_user_prompt=env.get(
                 "EXTRACTION_TEMPORAL_USER_PROMPT", _DEFAULT_TEMPORAL_USER_PROMPT
             ),
+            temperature=float(env.get("EXTRACTION_TEMPERATURE", str(_DEFAULT_TEMPERATURE))),
         )
 
     def addon_params(self) -> dict:
