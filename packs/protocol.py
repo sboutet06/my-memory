@@ -20,6 +20,12 @@ class Pack(Protocol):
     name: str
     version: str
 
+    # Optional, introspected with getattr at consumption sites:
+    #   declared_types: list[str]
+    #     Entity types the pack contributes to the extraction taxonomy.
+    #     Unioned with core types; the LLM is asked to use them when
+    #     applicable. Packs that don't need new types can omit this.
+
     def matches(self, metadata: dict, content_md: str) -> bool:
         """True if this pack should handle the given ingested document.
 

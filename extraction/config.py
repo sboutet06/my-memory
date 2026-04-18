@@ -51,6 +51,35 @@ def _parse_csv_list(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def compose_entity_types(base: list[str], packs) -> list[str]:
+    """Union base types with each pack's `declared_types` in registration order.
+
+    Case-insensitive dedup: the first occurrence (base, then pack order)
+    wins, preserving its original casing. Packs without `declared_types`
+    contribute nothing.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for t in base:
+        key = t.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+    for pack in packs:
+        declared = getattr(pack, "declared_types", None) or []
+        for t in declared:
+            key = t.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            # Normalize pack-contributed types to lowercase — downstream
+            # enforcement (`extraction.taxonomy`) lowercases for comparison,
+            # so any mixed casing in the declared list is moot and confusing.
+            out.append(key)
+    return out
+
+
 @dataclass(frozen=True)
 class ExtractionConfig:
     llm_model: str = _DEFAULT_LLM_MODEL

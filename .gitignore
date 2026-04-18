@@ -31,3 +31,9 @@ lightrag.log
 
 # Extraction store (KG data, auto-generated)
 extraction_store/
+
+# Runtime artifacts
+extraction_store/
+extraction_store.bak/
+corrections/source/
+corrections/derivation/

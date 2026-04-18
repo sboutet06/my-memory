@@ -26,7 +26,8 @@ from corrections.derivation_io import (
     save_alias_correction,
     save_entity_type_bucket,
 )
-from extraction.config import ExtractionConfig
+from extraction.config import ExtractionConfig, compose_entity_types
+from packs.registry import discover_packs
 from extraction.alias import DEFAULT_THRESHOLD
 from extraction.graph import (
     DEFAULT_WORKING_DIR,
@@ -45,6 +46,33 @@ from extraction.provenance import extract_document_ids
 logger = logging.getLogger("extraction")
 
 QUERY_MODES = ("hybrid", "local", "global", "naive", "mix")
+DEFAULT_PACKS_DIR = Path("packs")
+
+
+def _load_packs(packs_dir: Path | None, disable: bool) -> list:
+    """Return the list of discovered Pack instances (empty if disabled)."""
+    if disable:
+        return []
+    directory = packs_dir if packs_dir is not None else DEFAULT_PACKS_DIR
+    if not directory.exists():
+        return []
+    return discover_packs(directory).list()
+
+
+def _config_with_packs(config: ExtractionConfig, packs: list) -> ExtractionConfig:
+    """Return a new config whose entity_types union pack declared types."""
+    if not packs:
+        return config
+    types = compose_entity_types(config.entity_types, packs)
+    return ExtractionConfig(
+        llm_model=config.llm_model,
+        embed_model=config.embed_model,
+        embed_dim=config.embed_dim,
+        language=config.language,
+        base_url=config.base_url,
+        entity_types=types,
+        temporal_user_prompt=config.temporal_user_prompt,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,6 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract.add_argument(
         "--corrections-root", type=Path, default=None,
         help="Corrections root (default: <store>/../corrections)",
+    )
+    p_extract.add_argument(
+        "--packs-dir", type=Path, default=None,
+        help=f"Packs directory (default: {DEFAULT_PACKS_DIR})",
+    )
+    p_extract.add_argument(
+        "--no-packs", action="store_true",
+        help="Disable pack discovery (core taxonomy only)",
     )
     p_extract.add_argument("-v", "--verbose", action="store_true")
 
@@ -169,10 +205,14 @@ def _emit_alias_corrections(ambiguous_groups: list[list[str]], corrections_root:
 
 
 async def _run_extract(store_root: Path, working_dir: Path,
-                       corrections_root: Path | None) -> int:
+                       corrections_root: Path | None,
+                       packs_dir: Path | None, no_packs: bool) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
     config.require_api_key()
+
+    packs = _load_packs(packs_dir, no_packs)
+    config = _config_with_packs(config, packs)
 
     docs = discover_store_docs(store_root)
     if not docs:
@@ -200,6 +240,9 @@ async def _run_extract(store_root: Path, working_dir: Path,
             "entity_type_buckets_written": buckets_written,
             "root": str(resolved_corr),
         },
+        "packs": [{"name": p.name, "version": p.version,
+                   "declared_types": getattr(p, "declared_types", [])}
+                  for p in packs],
         "config": {
             "llm_model": config.llm_model,
             "embed_model": config.embed_model,
@@ -404,7 +447,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.cmd == "extract":
-        return asyncio.run(_run_extract(args.store, args.working_dir, args.corrections_root))
+        return asyncio.run(_run_extract(
+            args.store, args.working_dir, args.corrections_root,
+            args.packs_dir, args.no_packs,
+        ))
     if args.cmd == "annotate-temporal":
         return asyncio.run(_run_annotate_temporal(args.store, args.working_dir, args.dry_run))
     if args.cmd == "dedupe":
