@@ -30,9 +30,98 @@
       "id": "aggregation-expenses",
       "question": "Quelle est la catégorie de dépense la plus importante visible dans mes relevés bancaires ?",
       "tags": ["aggregation", "table"],
-      "notes": "Known-failing case. LightRAG pulls scattered amount-entities from the bank statement but has no category aggregation. LLM tends to answer from tax declaration rather than bank data. This is the target of the table-aware extraction phase.",
+      "notes": "Passes since Phase 4.5 structured-extraction injected transaction_category summary nodes. Transfer_out dominates at 911.40 EUR over 14 transactions.",
       "expected_documents": ["RLV_CHQ"],
       "expected_entities": [],
+      "expected_facts": [],
+      "forbidden_facts": []
+    },
+    {
+      "id": "children-medical-history",
+      "question": "Quels suivis médicaux ont Gabriel, Benjamin et Sophia ?",
+      "tags": ["healthcare", "cross-doc", "family"],
+      "notes": "Cross-child retrieval across pediatric healthcare docs. Exercises alias resolution on first names + healthcare pack types.",
+      "expected_documents": [
+        "Ordonnance Gabriel",
+        "Certificat Benjamin",
+        "Dossier patient Benjamin",
+        "Echographie Sophia"
+      ],
+      "expected_entities": ["Gabriel", "Benjamin", "Sophia"],
+      "expected_facts": [],
+      "forbidden_facts": []
+    },
+    {
+      "id": "prescribed-medications",
+      "question": "Quelles sont les prescriptions médicales présentes dans mes documents ?",
+      "tags": ["healthcare", "medication"],
+      "notes": "Tests the new `medication` / `procedure` pack types. Ordonnance Gabriel + Ordonnances Cabinet Urologie are the two prescription docs.",
+      "expected_documents": ["Ordonnance Gabriel", "Ordonnances Cabinet Urologie"],
+      "expected_entities": [],
+      "expected_facts": ["ordonnance"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "employment-intel",
+      "question": "Pour quelle entreprise ai-je travaillé et à quel poste ?",
+      "tags": ["work", "cross-doc"],
+      "notes": "Cross-references employment contract + payslip. Tests the new `employer` / `role` pack types. Intel Mobile Communications France, cadre / engineer.",
+      "expected_documents": ["Contrat de travail Intel", "Bulletin Paie"],
+      "expected_entities": ["Intel"],
+      "expected_facts": ["Intel"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "owned-vehicles",
+      "question": "Quels véhicules apparaissent dans mes documents ?",
+      "tags": ["vehicle"],
+      "notes": "Tests the new `vehicle` pack type. Two sources: MAAF insurance proposal + Renault Zoé order form.",
+      "expected_documents": ["Proposition auto", "bon commande zoe"],
+      "expected_entities": ["Zoé"],
+      "expected_facts": [],
+      "forbidden_facts": []
+    },
+    {
+      "id": "tax-timeline",
+      "question": "Quels documents fiscaux (déclarations ou paiements) ai-je pour la période 2010–2013 ?",
+      "tags": ["tax", "temporal"],
+      "notes": "Three tax docs spanning 2010–2013: déclaration 2010, paiement locaux 2011, télérèglement IR février 2013. Tests temporal ordering across pre-2016 tax history.",
+      "expected_documents": [
+        "Déclaration Impôts 2010",
+        "Paiement impots locaux 2011",
+        "telereglement_IR"
+      ],
+      "expected_entities": [],
+      "expected_facts": ["2010", "2011", "2013"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "family-composition",
+      "question": "Quels sont les membres de la famille Boutet identifiables à travers les documents ?",
+      "tags": ["cross-doc", "family", "identity"],
+      "notes": "Cross-doc family resolution. Five people appear across many docs: Sébastien (partout), Mylène El Kaim (compromis, zoe, RLV), Benjamin (certificat, dossier), Gabriel (ordonnance, lettre MV4), Sophia (échographie). Good test of alias resolution on short first names.",
+      "expected_documents": [],
+      "expected_entities": ["Sébastien", "Mylène", "Benjamin", "Gabriel", "Sophia"],
+      "expected_facts": [],
+      "forbidden_facts": []
+    },
+    {
+      "id": "property-acquisition-price",
+      "question": "À quelle date et à quel prix l'acquisition de la résidence a-t-elle été conclue ?",
+      "tags": ["real-estate", "temporal", "amount"],
+      "notes": "Single-doc extraction: compromis signed 13 mai 2016 in Châteauneuf-Grasse, purchase price 627 000 EUR. Tests temporal + amount reasoning on a known doc.",
+      "expected_documents": ["Compromis"],
+      "expected_entities": [],
+      "expected_facts": ["2016", "627"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "identity-documents",
+      "question": "Quels documents d'identité apparaissent dans mes archives ?",
+      "tags": ["identity"],
+      "notes": "Two ID docs in corpus: passport and national ID card (pc_seb). Both quality=degraded, tests that degraded-OCR signal still enables retrieval.",
+      "expected_documents": ["PasseportSeb", "pc_seb"],
+      "expected_entities": ["passeport"],
       "expected_facts": [],
       "forbidden_facts": []
     }
