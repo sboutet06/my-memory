@@ -1,16 +1,29 @@
-"""CLI: `python -m ingestion <file-or-folder> [--store STORE] [-v]`."""
+"""CLI: `python -m ingestion <file-or-folder> [--store STORE] [-v]`.
+
+Also: `python -m ingestion reocr <doc_id> [--backend ocrmac]` re-runs
+an alternate OCR backend for a previously-ingested document, writing
+the corrected content into the source correction overlay.
+"""
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
 
+from corrections.io import (
+    correction_path,
+    load_source_correction,
+    save_source_correction,
+)
+from corrections.schemas import SourceCorrection
 from ingestion.ingest import (
     DEFAULT_STORE_ROOT,
     ingest_document,
 )
 from ingestion.models import IngestionResult, IngestionStatus
+from ingestion.ocr_backends import KNOWN_BACKENDS, run_ocrmac_on_pdf
 
 logger = logging.getLogger("ingestion")
 
@@ -50,7 +63,99 @@ def _ingest_batch(folder: Path, store_root: Path) -> int:
     return failures
 
 
+def _run_reocr(doc_id: str, backend: str | None, store_root: Path,
+               corrections_root: Path) -> int:
+    """Re-OCR a previously-ingested document with an alternate backend.
+
+    Resolution order for `backend`:
+      1. explicit --backend argument
+      2. `overrides.ocr_backend` on the existing source correction
+    """
+    doc_dir = store_root / doc_id
+    meta_path = doc_dir / "metadata.json"
+    if not meta_path.is_file():
+        print(f"No store entry for {doc_id}", file=sys.stderr)
+        return 2
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    original_path = Path(meta.get("original_path", ""))
+    if not original_path.is_file():
+        print(f"Original file missing: {original_path}", file=sys.stderr)
+        return 2
+
+    correction = load_source_correction(corrections_root, doc_id)
+    chosen_backend = (
+        backend
+        or (correction.overrides.get("ocr_backend") if correction else None)
+    )
+    if not chosen_backend:
+        print(
+            f"No backend specified and none set on the correction for {doc_id}. "
+            f"Pass --backend or edit overrides.ocr_backend.",
+            file=sys.stderr,
+        )
+        return 2
+    if chosen_backend not in KNOWN_BACKENDS:
+        print(
+            f"Unknown backend {chosen_backend!r}. Known: {sorted(KNOWN_BACKENDS)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if chosen_backend == "ocrmac":
+        text = run_ocrmac_on_pdf(original_path)
+    else:  # pragma: no cover
+        raise RuntimeError(f"unhandled backend {chosen_backend}")
+
+    # Write the corrected content alongside the correction YAML.
+    source_dir = corrections_root / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    overlay_rel = f"source/{doc_id}.md"
+    (corrections_root / overlay_rel).write_text(text, encoding="utf-8")
+
+    if correction is None:
+        correction = SourceCorrection(
+            document_id=doc_id,
+            original_filename=meta.get("original_filename", ""),
+        )
+    correction.overrides["ocr_backend"] = chosen_backend
+    correction.overrides["content_md_override_path"] = overlay_rel
+    save_source_correction(corrections_root, correction)
+
+    print(
+        f"Re-OCR'd {doc_id} with {chosen_backend}: "
+        f"{len(text)} chars → {overlay_rel}"
+    )
+    return 0
+
+
+def _main_reocr(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="python -m ingestion reocr")
+    parser.add_argument("doc_id")
+    parser.add_argument(
+        "--backend",
+        help=f"OCR backend ({'|'.join(sorted(KNOWN_BACKENDS))}); "
+             "defaults to overrides.ocr_backend from the source correction",
+    )
+    parser.add_argument("--store", type=Path, default=DEFAULT_STORE_ROOT)
+    parser.add_argument("--corrections-root", type=Path, default=None)
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    corr_root = args.corrections_root if args.corrections_root is not None else args.store.parent / "corrections"
+    return _run_reocr(args.doc_id, args.backend, args.store, corr_root)
+
+
 def main(argv: list[str] | None = None) -> int:
+    effective = list(argv) if argv is not None else sys.argv[1:]
+    # `reocr` is a sibling subcommand — kept out of the main positional parser
+    # so paths with leading dashes or absolute paths don't confuse argparse.
+    if effective and effective[0] == "reocr":
+        return _main_reocr(effective[1:])
+
     parser = argparse.ArgumentParser(prog="python -m ingestion")
     parser.add_argument("target", type=Path, help="File or folder to ingest")
     parser.add_argument(
@@ -58,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Store root (default: {DEFAULT_STORE_ROOT})",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="DEBUG logs")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(effective)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

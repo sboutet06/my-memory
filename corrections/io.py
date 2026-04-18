@@ -50,6 +50,8 @@ _HINT_REPLACED_BY = "null | <another document_id> to mark this doc superseded"
 _HINT_METADATA = "e.g. document_date: '2016-05-13' | extraction_quality: rich|degraded|empty"
 _HINT_CONTENT_REPLACEMENTS = "list of {find: <str>, replace: <str>}"
 _HINT_TAGS = "free-form list of strings, e.g. ['obsolete', 'draft']"
+_HINT_OCR_BACKEND = "null | ocrmac — alternate OCR engine to re-run for this doc"
+_HINT_CONTENT_OVERRIDE = "null | path to corrected markdown (auto-filled after re-OCR)"
 
 
 def _build_commented(c: SourceCorrection) -> CommentedMap:
@@ -69,6 +71,10 @@ def _build_commented(c: SourceCorrection) -> CommentedMap:
         ov.yaml_add_eol_comment(_HINT_METADATA, "metadata")
         ov.yaml_add_eol_comment(_HINT_CONTENT_REPLACEMENTS, "content_replacements")
         ov.yaml_add_eol_comment(_HINT_TAGS, "tags")
+        if "ocr_backend" in ov:
+            ov.yaml_add_eol_comment(_HINT_OCR_BACKEND, "ocr_backend")
+        if "content_md_override_path" in ov:
+            ov.yaml_add_eol_comment(_HINT_CONTENT_OVERRIDE, "content_md_override_path")
         doc["overrides"] = ov
 
     return doc

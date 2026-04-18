@@ -244,7 +244,9 @@ async def _run_extract(store_root: Path, working_dir: Path,
 
     rag = await build_rag(working_dir=working_dir, config=config)
     try:
-        inserted = await extract_documents(rag, docs)
+        inserted = await extract_documents(
+            rag, docs, corrections_root=resolved_corr,
+        )
         pp_stats = await post_process(rag, allowed_entity_types=config.entity_types)
         stats = await graph_stats(rag)
         snapshot = await snapshot_nodes(rag)
@@ -348,11 +350,18 @@ async def _run_extract_structured(store_root: Path, working_dir: Path,
         print(f"No ingested docs under {store_root}.", file=sys.stderr)
         return 1
 
+    from corrections.io import load_source_correction
+    from corrections.overlay import resolve_content
+
+    corrections_root = _resolve_corrections_root(None, store_root)
+
     # Collect structured output from every pack × doc pair.
     all_transactions = []
     per_doc_stats = []
     for md_path, meta in docs:
-        content = md_path.read_text(encoding="utf-8")
+        raw = md_path.read_text(encoding="utf-8")
+        correction = load_source_correction(corrections_root, meta["document_id"])
+        content = resolve_content(raw, correction, corrections_root)
         for pack in packs:
             extractor = getattr(pack, "extract_structured", None)
             if not callable(extractor):

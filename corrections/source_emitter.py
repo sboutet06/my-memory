@@ -29,15 +29,23 @@ def emit_doubts_for_metadata(metadata: DocumentMetadata) -> list[Doubt]:
         ))
 
     if metadata.extraction_quality == ExtractionQuality.DEGRADED:
+        rationale = (
+            "Docling layout analyzer wrapped the page as a picture; OCR "
+            "text was recovered via fallback renderer but carries no "
+            "structural hierarchy. Verify content.md is usable."
+        )
+        # Degraded + no-date together → concrete remediation suggestion.
+        if metadata.document_date is None:
+            rationale += (
+                " Consider `overrides.ocr_backend: ocrmac` then run "
+                "`python -m ingestion reocr <doc_id>` — Apple Vision often "
+                "recovers text Docling misses (handwriting, ID layouts)."
+            )
         out.append(Doubt(
             field="extraction_quality",
             inferred_value="degraded",
             confidence=Confidence.MEDIUM,
-            rationale=(
-                "Docling layout analyzer wrapped the page as a picture; OCR "
-                "text was recovered via fallback renderer but carries no "
-                "structural hierarchy. Verify content.md is usable."
-            ),
+            rationale=rationale,
             suggested_action=SuggestedAction.REVIEW,
         ))
     elif metadata.extraction_quality == ExtractionQuality.EMPTY:

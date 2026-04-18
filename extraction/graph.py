@@ -83,6 +83,8 @@ def _prepend_date_header(text: str, document_date: str | None) -> str:
 async def extract_documents(
     rag: LightRAG,
     docs: Iterable[tuple[Path, dict]],
+    *,
+    corrections_root: Path | None = None,
 ) -> int:
     """Insert the given docs into `rag`. Returns count inserted.
 
@@ -90,17 +92,37 @@ async def extract_documents(
     provenance parsing sees a canonical `/store/{doc_id}/` segment, and
     prepends a document-date header when the ingestion metadata carries
     one.
+
+    When `corrections_root` is given, source corrections are consulted
+    per-doc to apply `content_md_override_path` + `content_replacements`
+    before extraction — giving alternate-OCR output priority over the
+    raw Docling markdown.
     """
+    from corrections.io import load_source_correction
+    from corrections.overlay import apply_metadata_overlay, resolve_content
+
     texts: list[str] = []
     ids: list[str] = []
     file_paths: list[str] = []
+    overlay_hits = 0
     for md_path, meta in docs:
         raw = md_path.read_text(encoding="utf-8")
-        texts.append(_prepend_date_header(raw, meta.get("document_date")))
+        correction = None
+        if corrections_root is not None:
+            correction = load_source_correction(corrections_root, meta["document_id"])
+            meta = apply_metadata_overlay(meta, correction)
+            effective = resolve_content(raw, correction, corrections_root)
+            if correction is not None and correction.overrides.get("content_md_override_path"):
+                overlay_hits += 1
+        else:
+            effective = raw
+        texts.append(_prepend_date_header(effective, meta.get("document_date")))
         ids.append(meta["document_id"])
         file_paths.append(str(md_path.resolve()))
     if not texts:
         return 0
+    if overlay_hits:
+        logger.info("Applied content overlay on %d/%d docs", overlay_hits, len(texts))
     logger.info("Extracting from %d document(s)", len(texts))
     await rag.ainsert(texts, ids=ids, file_paths=file_paths)
     return len(texts)

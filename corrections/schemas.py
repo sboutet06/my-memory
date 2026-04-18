@@ -46,6 +46,12 @@ _DEFAULT_OVERRIDES: dict[str, Any] = {
     "metadata": {},
     "content_replacements": [],
     "tags": [],
+    # OCR routing — set to a backend name (e.g. "ocrmac") to re-OCR the
+    # document with an alternate engine. `content_md_override_path` then
+    # points at the resulting markdown file (relative to the corrections
+    # root) so downstream reads see the corrected content.
+    "ocr_backend": None,
+    "content_md_override_path": None,
 }
 
 
