@@ -42,6 +42,7 @@ from extraction.graph import (
     snapshot_nodes,
 )
 from extraction.diagnostics import trace_query
+from extraction.retrieval_enhance import write_doc_summary_chunks
 from extraction.structured import inject_transactions
 from extraction.provenance import extract_document_ids
 
@@ -183,6 +184,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually mutate the graph (default: dry-run, print the plan)",
     )
     p_apply.add_argument("-v", "--verbose", action="store_true")
+
+    p_enhance = sub.add_parser(
+        "enhance-retrieval",
+        help="Write per-doc summary chunks to chunks_vdb (fixes chunks bottleneck)",
+    )
+    p_enhance.add_argument("--store", type=Path, default=Path("store"))
+    p_enhance.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_enhance.add_argument("-v", "--verbose", action="store_true")
 
     p_diag = sub.add_parser(
         "diagnose",
@@ -525,6 +534,25 @@ def _build_id_to_filename(store_root: Path) -> dict[str, str]:
     return mapping
 
 
+async def _run_enhance_retrieval(store_root: Path, working_dir: Path) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        report = await write_doc_summary_chunks(rag, store_root)
+    finally:
+        await rag.finalize_storages()
+
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
 async def _run_diagnose(question: str, working_dir: Path, top_k: int,
                         rerank_top_k: int, full: bool,
                         expected_docs: str | None, store_root: Path) -> int:
@@ -706,6 +734,8 @@ def main(argv: list[str] | None = None) -> int:
         ))
     if args.cmd == "query":
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
+    if args.cmd == "enhance-retrieval":
+        return asyncio.run(_run_enhance_retrieval(args.store, args.working_dir))
     if args.cmd == "diagnose":
         return asyncio.run(_run_diagnose(
             args.question, args.working_dir, args.top_k, args.rerank_top_k,
