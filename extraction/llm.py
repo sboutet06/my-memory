@@ -31,6 +31,11 @@ def make_llm_func(config: ExtractionConfig):
         keyword_extraction: bool = False,
         **kwargs,
     ) -> str:
+        # Deterministic decoding so evals + queries return reproducible
+        # answers across runs. Without this, OpenRouter routes the same
+        # call to different provider instances whose seeds differ, giving
+        # stochastic outputs that make measurement noisy.
+        kwargs.setdefault("temperature", 0.0)
         return await openai_complete_if_cache(
             config.llm_model,
             prompt,
