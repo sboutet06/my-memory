@@ -42,7 +42,7 @@ from extraction.graph import (
     snapshot_nodes,
 )
 from extraction.diagnostics import trace_query
-from extraction.retrieval_enhance import write_doc_summary_chunks
+from extraction.retrieval_enhance import write_doc_summary_chunks, write_index_nodes
 from extraction.structured import inject_transactions
 from extraction.provenance import extract_document_ids
 
@@ -192,6 +192,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_enhance.add_argument("--store", type=Path, default=Path("store"))
     p_enhance.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
     p_enhance.add_argument("-v", "--verbose", action="store_true")
+
+    p_idx = sub.add_parser(
+        "build-indexes",
+        help="Inject answer-shaped Profile / Catalog synthetic nodes",
+    )
+    p_idx.add_argument("--store", type=Path, default=Path("store"))
+    p_idx.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_idx.add_argument("--min-docs-for-profile", type=int, default=2)
+    p_idx.add_argument("--min-entities-for-catalog", type=int, default=2)
+    p_idx.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the plan without mutating the graph.",
+    )
+    p_idx.add_argument("-v", "--verbose", action="store_true")
 
     p_diag = sub.add_parser(
         "diagnose",
@@ -553,6 +567,32 @@ async def _run_enhance_retrieval(store_root: Path, working_dir: Path) -> int:
     return 0
 
 
+async def _run_build_indexes(store_root: Path, working_dir: Path,
+                             min_docs: int, min_entities: int,
+                             dry_run: bool) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        report = await write_index_nodes(
+            rag, store_root,
+            min_docs_for_profile=min_docs,
+            min_entities_for_catalog=min_entities,
+            dry_run=dry_run,
+        )
+    finally:
+        await rag.finalize_storages()
+
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
 async def _run_diagnose(question: str, working_dir: Path, top_k: int,
                         rerank_top_k: int, full: bool,
                         expected_docs: str | None, store_root: Path) -> int:
@@ -736,6 +776,12 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
     if args.cmd == "enhance-retrieval":
         return asyncio.run(_run_enhance_retrieval(args.store, args.working_dir))
+    if args.cmd == "build-indexes":
+        return asyncio.run(_run_build_indexes(
+            args.store, args.working_dir,
+            args.min_docs_for_profile, args.min_entities_for_catalog,
+            args.dry_run,
+        ))
     if args.cmd == "diagnose":
         return asyncio.run(_run_diagnose(
             args.question, args.working_dir, args.top_k, args.rerank_top_k,

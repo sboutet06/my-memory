@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 # Default entity taxonomy — small, universal, domain-agnostic.
+# `entity_profile` and `catalog_index` are retrieval-infra types for
+# synthetic Phase 5.4 index nodes; kept in core so taxonomy enforcement
+# preserves them if the pipeline ever re-processes them.
 _DEFAULT_ENTITY_TYPES: tuple[str, ...] = (
     "person",
     "organization",
@@ -20,6 +23,8 @@ _DEFAULT_ENTITY_TYPES: tuple[str, ...] = (
     "document",
     "identifier",
     "concept",
+    "entity_profile",
+    "catalog_index",
 )
 
 _DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"

@@ -25,6 +25,13 @@ from typing import Any, Optional
 
 from extraction.provenance import parse_document_ids
 
+from extraction.index_nodes import (
+    CATALOG_PREFIX,
+    ENTITY_PROFILE_PREFIX,
+    is_index_node_name,
+    plan_index_nodes,
+)
+
 logger = logging.getLogger(__name__)
 
 SUMMARY_CHUNK_PREFIX = "summary-chunk-"
@@ -242,3 +249,114 @@ async def write_doc_summary_chunks(
         "Wrote %d summary chunks across %d docs", len(summaries), scanned,
     )
     return {"docs_scanned": scanned, "summaries_written": len(summaries)}
+
+
+# --------------------- Phase 5.4: answer-shaped indexes -----------------
+
+
+def _build_store_meta(store_root: Path) -> dict:
+    """{doc_id: metadata_dict} for every doc in the store."""
+    out: dict[str, dict] = {}
+    if not store_root.exists():
+        return out
+    for entry in sorted(store_root.iterdir()):
+        if not entry.is_dir() or entry.name.startswith(".tmp-"):
+            continue
+        meta_path = entry / "metadata.json"
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        doc_id = meta.get("document_id")
+        if doc_id:
+            out[doc_id] = meta
+    return out
+
+
+async def _cleanup_prior_index_nodes(rag) -> int:
+    """Delete any existing Profile:/Catalog: nodes; idempotency for re-runs."""
+    kg = rag.chunk_entity_relation_graph
+    labels = await kg.get_all_labels()
+    stale = [n for n in labels if is_index_node_name(n)]
+    for name in stale:
+        try:
+            await rag.adelete_by_entity(name)
+        except Exception as exc:
+            logger.warning("failed to delete %r: %s", name, exc)
+    return len(stale)
+
+
+async def write_index_nodes(
+    rag,
+    store_root: Path,
+    *,
+    min_docs_for_profile: int = 2,
+    min_entities_for_catalog: int = 2,
+    dry_run: bool = False,
+) -> dict:
+    """Plan + inject answer-shaped index nodes (Profile / Catalog).
+
+    On `dry_run=True`, returns the plan without any mutation.
+    Otherwise:
+      1. Delete prior index nodes (idempotent re-run).
+      2. Snapshot graph; pass to planner.
+      3. Create each index node via rag.acreate_entity so it lands in
+         both the graph and the entity vector DB.
+    """
+    from extraction.graph import snapshot_nodes  # local to avoid cycles
+
+    store_meta = _build_store_meta(store_root)
+    if not store_meta:
+        return {"nodes_planned": 0, "nodes_written": 0, "stale_removed": 0,
+                "dry_run": dry_run}
+
+    snapshot = await snapshot_nodes(rag)
+    # Exclude prior index nodes from the planner's view so its filters
+    # don't compound on previous runs.
+    live_snapshot = {k: v for k, v in snapshot.items() if not is_index_node_name(k)}
+
+    plan = plan_index_nodes(
+        live_snapshot, store_meta,
+        min_docs_for_profile=min_docs_for_profile,
+        min_entities_for_catalog=min_entities_for_catalog,
+    )
+
+    if dry_run:
+        return {
+            "nodes_planned": len(plan),
+            "nodes_written": 0,
+            "stale_removed": 0,
+            "dry_run": True,
+            "profiles": [n["name"] for n in plan if n["name"].startswith(ENTITY_PROFILE_PREFIX)],
+            "catalogs": [n["name"] for n in plan if n["name"].startswith(CATALOG_PREFIX)],
+        }
+
+    stale = await _cleanup_prior_index_nodes(rag)
+
+    written = 0
+    errors: list[str] = []
+    for spec in plan:
+        name = spec["name"]
+        payload = {
+            "entity_type": spec["entity_type"],
+            "description": spec["description"],
+            "source_id": spec["source_id"],
+            "file_path": spec["file_path"],
+        }
+        try:
+            await rag.acreate_entity(name, payload)
+            written += 1
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+
+    await rag.chunk_entity_relation_graph.index_done_callback()
+
+    return {
+        "nodes_planned": len(plan),
+        "nodes_written": written,
+        "stale_removed": stale,
+        "errors": errors[:10],
+        "dry_run": False,
+    }
