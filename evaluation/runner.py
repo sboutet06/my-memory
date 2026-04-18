@@ -20,6 +20,10 @@ from evaluation.scorer import (
 from extraction.config import ExtractionConfig
 from extraction.graph import DEFAULT_WORKING_DIR, build_rag
 from extraction.provenance import extract_document_ids
+from extraction.references import (
+    extract_references_from_query_result,
+    inject_references,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +78,23 @@ async def run_case(
     id_to_filename: dict[str, str],
     config: ExtractionConfig,
 ) -> EvalCaseResult:
-    answer = await rag.aquery(
+    # Use aquery_llm to get LightRAG's authoritative reference list
+    # alongside the answer; rewrite the answer's References block into a
+    # canonical `/store/<uuid>/content.md` form so the provenance regex
+    # can always parse it. This is deterministic and LLM-agnostic;
+    # see Phase 5.3b in docs/intent.md.
+    result = await rag.aquery_llm(
         case.question,
         param=QueryParam(
             mode=case.mode,
             user_prompt=config.temporal_user_prompt,
         ),
     )
+    llm_resp = result.get("llm_response") or {}
+    answer = llm_resp.get("content") or ""
+    refs = extract_references_from_query_result(result)
+    answer = inject_references(answer, refs)
+
     cited_ids = extract_document_ids(answer)
     cited_filenames = [id_to_filename.get(i, i) for i in cited_ids]
     return score_case(case, answer, cited_filenames)

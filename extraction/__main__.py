@@ -44,6 +44,10 @@ from extraction.graph import (
 from extraction.diagnostics import trace_query
 from extraction.retrieval_enhance import write_doc_summary_chunks, write_index_nodes
 from extraction.provenance import extract_document_ids
+from extraction.references import (
+    extract_references_from_query_result,
+    inject_references,
+)
 
 logger = logging.getLogger("extraction")
 
@@ -733,7 +737,7 @@ async def _run_query(question: str, mode: str, working_dir: Path, as_json: bool)
 
     rag = await build_rag(working_dir=working_dir, config=config)
     try:
-        answer = await rag.aquery(
+        result = await rag.aquery_llm(
             question,
             param=QueryParam(
                 mode=mode,
@@ -742,6 +746,11 @@ async def _run_query(question: str, mode: str, working_dir: Path, as_json: bool)
         )
     finally:
         await rag.finalize_storages()
+
+    llm_resp = result.get("llm_response") or {}
+    answer = llm_resp.get("content") or ""
+    refs = extract_references_from_query_result(result)
+    answer = inject_references(answer, refs)
 
     doc_ids = extract_document_ids(answer)
 

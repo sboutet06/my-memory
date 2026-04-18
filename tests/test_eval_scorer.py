@@ -35,6 +35,13 @@ def test_doc_coverage_empty_actual_is_zero_when_expected_nonempty() -> None:
     assert score_document_coverage(["x"], []) == 0.0
 
 
+def test_doc_coverage_nfc_matches_nfd_filenames() -> None:
+    """macOS filesystems return NFD, cases.json is authored in NFC."""
+    nfc_prefix = "Déclaration Impôts"              # NFC: é is U+00E9
+    nfd_filename = "De\u0301claration Impo\u0302ts 2010.pdf"  # NFD
+    assert score_document_coverage([nfc_prefix], [nfd_filename]) == 1.0
+
+
 # -- entity / fact coverage (substring, case-insensitive) -----------------
 
 def test_entity_coverage_case_insensitive() -> None:
