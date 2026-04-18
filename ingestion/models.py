@@ -41,6 +41,10 @@ class DocumentMetadata(BaseModel):
     source_type: SourceType = SourceType.FILESYSTEM
     extraction_quality: ExtractionQuality = ExtractionQuality.RICH
     document_date: Optional[date] = None
+    # Closed-vocabulary tags set at ingest time by the LLM classifier
+    # (see ingestion/classifier.py). 1–3 tags, most relevant first.
+    # Empty list = classifier not run or returned nothing.
+    doc_context: list[str] = Field(default_factory=list)
 
 
 class IngestionResult(BaseModel):

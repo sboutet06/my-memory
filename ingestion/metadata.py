@@ -71,6 +71,7 @@ def build_metadata(
     extraction_quality: ExtractionQuality = ExtractionQuality.RICH,
     document_date: date | None = None,
     document_id: str | None = None,
+    doc_context: list[str] | None = None,
 ) -> DocumentMetadata:
     """Assemble a `DocumentMetadata` from measured inputs."""
     return DocumentMetadata(
@@ -86,4 +87,5 @@ def build_metadata(
         source_type=SourceType.FILESYSTEM,
         extraction_quality=extraction_quality,
         document_date=document_date,
+        doc_context=doc_context or [],
     )

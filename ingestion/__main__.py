@@ -42,7 +42,7 @@ def _format(result: IngestionResult, source: Path) -> str:
     return head
 
 
-def _ingest_batch(folder: Path, store_root: Path) -> int:
+def _ingest_batch(folder: Path, store_root: Path, *, classify: bool = True) -> int:
     files = sorted(p for p in folder.iterdir() if p.is_file())
     if not files:
         print(f"No files in {folder}")
@@ -51,7 +51,7 @@ def _ingest_batch(folder: Path, store_root: Path) -> int:
     failures = 0
     for fp in files:
         try:
-            result = ingest_document(fp, store_root=store_root)
+            result = ingest_document(fp, store_root=store_root, classify=classify)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Unhandled error on %s", fp)
             print(f"[error] {fp.name}: {exc}")
@@ -128,6 +128,66 @@ def _run_reocr(doc_id: str, backend: str | None, store_root: Path,
     return 0
 
 
+def _run_classify_existing(store_root: Path, only_doc_id: str | None) -> int:
+    """Run the LLM classifier over already-ingested docs; update metadata.json."""
+    from extraction.config import ExtractionConfig
+    from ingestion.classifier import classify_document
+    import asyncio
+
+    if not store_root.exists():
+        print(f"Store not found: {store_root}", file=sys.stderr)
+        return 2
+
+    try:
+        config = ExtractionConfig.from_env()
+        config.require_api_key()
+    except Exception as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
+
+    async def run_all():
+        count = 0
+        for entry in sorted(store_root.iterdir()):
+            if not entry.is_dir() or entry.name.startswith(".tmp-"):
+                continue
+            if only_doc_id and entry.name != only_doc_id:
+                continue
+            meta_path = entry / "metadata.json"
+            md_path = entry / "content.md"
+            if not (meta_path.is_file() and md_path.is_file()):
+                continue
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            content = md_path.read_text(encoding="utf-8")
+            tags, rationale = await classify_document(
+                config,
+                filename=meta.get("original_filename", ""),
+                content_md=content,
+            )
+            meta["doc_context"] = tags
+            meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False, default=str))
+            print(f"[{entry.name[:8]}] {tags}  ({rationale[:60]})")
+            count += 1
+        return count
+
+    n = asyncio.run(run_all())
+    print(f"\nClassified {n} documents.")
+    return 0
+
+
+def _main_classify(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="python -m ingestion classify")
+    parser.add_argument("--store", type=Path, default=DEFAULT_STORE_ROOT)
+    parser.add_argument("--doc-id", type=str, default=None,
+                        help="Only (re-)classify this document_id")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    return _run_classify_existing(args.store, args.doc_id)
+
+
 def _main_reocr(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="python -m ingestion reocr")
     parser.add_argument("doc_id")
@@ -155,12 +215,18 @@ def main(argv: list[str] | None = None) -> int:
     # so paths with leading dashes or absolute paths don't confuse argparse.
     if effective and effective[0] == "reocr":
         return _main_reocr(effective[1:])
+    if effective and effective[0] == "classify":
+        return _main_classify(effective[1:])
 
     parser = argparse.ArgumentParser(prog="python -m ingestion")
     parser.add_argument("target", type=Path, help="File or folder to ingest")
     parser.add_argument(
         "--store", type=Path, default=DEFAULT_STORE_ROOT,
         help=f"Store root (default: {DEFAULT_STORE_ROOT})",
+    )
+    parser.add_argument(
+        "--no-classify", action="store_true",
+        help="Skip the per-doc LLM classifier (offline / air-gapped mode)",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="DEBUG logs")
     args = parser.parse_args(effective)
@@ -175,10 +241,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Not found: {target}", file=sys.stderr)
         return 2
 
+    classify = not args.no_classify
     if target.is_dir():
-        return 1 if _ingest_batch(target, args.store) else 0
+        return 1 if _ingest_batch(target, args.store, classify=classify) else 0
 
-    result = ingest_document(target, store_root=args.store)
+    result = ingest_document(target, store_root=args.store, classify=classify)
     print(_format(result, target))
     return 0 if result.status in {IngestionStatus.INGESTED, IngestionStatus.DUPLICATE} else 1
 

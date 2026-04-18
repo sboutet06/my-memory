@@ -22,6 +22,15 @@ from ingestion.models import (
 from ingestion.quality import assess_quality, render_fallback_markdown
 from ingestion.storage import find_duplicate, persist_document
 
+# Classifier is optional — fail soft if the LLM call errors (no API key,
+# network down). Ingestion stays local-first; classification improves
+# downstream retrieval but never blocks ingest.
+try:
+    from ingestion.classifier import classify_document as _classify_document  # noqa: F401
+    _CLASSIFIER_AVAILABLE = True
+except Exception:  # pragma: no cover
+    _CLASSIFIER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,11 +93,31 @@ def _emit_source_corrections(
     )
 
 
+def _classify_sync(filename: str, content_md: str) -> list[str]:
+    """Run the async classifier from sync code; failure → empty tags."""
+    if not _CLASSIFIER_AVAILABLE:
+        return []
+    try:
+        import asyncio
+        from extraction.config import ExtractionConfig
+        config = ExtractionConfig.from_env()
+        config.require_api_key()
+        tags, rationale = asyncio.run(_classify_document(
+            config, filename=filename, content_md=content_md,
+        ))
+        logger.info("Classified %s → %s (%s)", filename, tags, rationale[:60])
+        return tags
+    except Exception as exc:
+        logger.warning("Classifier failed on %s: %s", filename, exc)
+        return []
+
+
 def ingest_document(
     file_path: Path,
     *,
     store_root: Path = DEFAULT_STORE_ROOT,
     corrections_root: Path | None = None,
+    classify: bool = True,
 ) -> IngestionResult:
     if corrections_root is None:
         # Sibling of store_root — keeps test tmpdirs self-contained.
@@ -144,6 +173,10 @@ def ingest_document(
 
     document_date = detect_document_date(docling_md, file_path.name)
 
+    tags: list[str] = []
+    if classify:
+        tags = _classify_sync(file_path.name, docling_md)
+
     metadata = build_metadata(
         source_path=file_path,
         content_hash=content_hash,
@@ -151,6 +184,7 @@ def ingest_document(
         processing_duration_ms=duration_ms,
         extraction_quality=quality,
         document_date=document_date,
+        doc_context=tags,
     )
 
     try:

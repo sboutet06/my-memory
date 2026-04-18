@@ -98,12 +98,15 @@ def build_doc_summary(
     date = _fmt_date(metadata.get("document_date"))
     doc_id = metadata.get("document_id") or ""
     quality = metadata.get("extraction_quality") or "unknown"
+    doc_context = metadata.get("doc_context") or []
     lines.append(f"Document: {fn}")
     # Repeat filename tokens unquoted so they embed as plain words too.
     lines.append(f"Filename tokens: {fn.replace('_', ' ').replace('-', ' ')}")
     lines.append(f"Document date: {date}")
     lines.append(f"Document ID: {doc_id}")
     lines.append(f"Extraction quality: {quality}")
+    if doc_context:
+        lines.append(f"Document context: {', '.join(doc_context)}")
     if entity_names:
         short = entity_names[:_SUMMARY_MAX_ENTITIES]
         lines.append("Key entities: " + ", ".join(short))

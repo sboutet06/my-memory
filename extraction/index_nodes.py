@@ -56,13 +56,29 @@ def _doc_line(doc_id: str, store_meta: dict) -> str:
     meta = store_meta.get(doc_id) or {}
     fn = meta.get("original_filename", "")
     date = meta.get("document_date", "")
+    ctx = meta.get("doc_context") or []
     suffix_bits = []
     if fn:
         suffix_bits.append(fn)
     if date:
         suffix_bits.append(f"date={date}")
+    if ctx:
+        suffix_bits.append(f"context={'/'.join(ctx)}")
     suffix = f" ({', '.join(suffix_bits)})" if suffix_bits else ""
     return f"  - {_store_path(doc_id)}{suffix}"
+
+
+def _aggregate_contexts(doc_ids: Iterable[str], store_meta: dict) -> list[str]:
+    """Union of doc_context tags across the given docs, in first-seen order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for doc_id in doc_ids:
+        meta = store_meta.get(doc_id) or {}
+        for tag in (meta.get("doc_context") or []):
+            if tag not in seen:
+                seen.add(tag)
+                out.append(tag)
+    return out
 
 
 def _entity_doc_ids(node: dict) -> list[str]:
@@ -88,7 +104,10 @@ def _plan_entity_profiles(
         doc_ids = [d for d in _entity_doc_ids(node) if d in store_meta]
         if len(doc_ids) < min_docs:
             continue
-        # Build a stable description: name, type, summary line count, list of docs.
+        # Build a stable description: name, type, list of docs (each
+        # with its own per-doc context). No aggregated "primary context"
+        # header — that narrows the embedding toward one context and
+        # under-retrieves cross-context queries (measured).
         lines = [
             f"Profile of {name} (type: {etype}).",
             f"Appears in {len(doc_ids)} documents:",
