@@ -302,51 +302,248 @@ overrides:
 
 ---
 
+## Phases delivered (2026-04-18 continued)
+
+### Phase 3.5 — corrections framework (source layer)
+`corrections/` package. Pydantic schemas (Doubt, SourceCorrection),
+YAML round-trip with inline hint comments on every user-editable field
+(ruamel.yaml — humans never have to remember allowed values), idempotent
+merge that preserves user overrides when the pipeline re-emits doubts.
+Ingestion hook writes `corrections/source/{doc_id}.yaml` when Docling
+produces missing dates / degraded / empty quality / unsupported format.
+`python -m corrections review [--all]` CLI.
+
+### Phase 3.6 — derivation corrections
+Entity-type buckets (batch YAML per reason: `concept_fallback`,
+`remapped_singletons`) + one-file-per-cluster alias corrections under
+`corrections/derivation/`. Taxonomy enforcer now preserves
+`original_entity_type` so singletons stay inspectable; `cluster_entities`
+exposes ambiguous groups. CLI extended: `review source|entity-types|
+aliases`, `show <slug-or-doc-id>`, `stats`. `python -m extraction
+emit-corrections` snapshots the graph offline (no re-extract).
+
+### Phase 3.7 — apply derivation corrections
+Pure planner `build_plan(graph, buckets, aliases) → Plan(type_changes,
+merge_ops, warnings)`. Async mutator runs the plan against LightRAG via
+`upsert_node` + `amerge_entities`. `python -m extraction apply-
+corrections [--dry-run | --apply]`. E2E on a copy of the real graph:
+`sebastien_boutet` split, `plan_de_prevention_des_risques` merge, one
+type override — idempotent re-run produces empty plan with warnings.
+
+### Phase 4 — personal_documents pack
+First pack, installed under `packs/personal_documents/`. Declares 22
+life-domain entity types (object, vehicle, property, animal; medication,
+diagnosis, procedure, body_part, medical_provider; employer, role,
+skill; account, transaction_category; ingredient, dish, nutrient,
+cooking_technique; event, activity, trip, accommodation). Core adds
+`compose_entity_types(base, packs)` — case-insensitive union, core wins
+on conflict. Pack auto-discovered via `./packs/` scan, opt-out with
+`--no-packs`. On the 18-doc corpus, `concept_fallback` ratio dropped
+33% → 21% after re-extract; 18 of 22 pack types populated.
+
+### Phase 4.5 — first structured extractor
+`packs/personal_documents/schemas/transaction.py` + `extractors/
+bank_statement.py`: deterministic regex parser for French `RELEVE DE
+COMPTE` tables produces `Transaction` records; debit/credit totals
+matched the bank's printed `TOTAL` row exactly (914,00 / 540,00).
+`extraction/structured.py::inject_transactions` writes them as
+human-readable graph nodes via LightRAG's public `acreate_entity /
+acreate_relation` API so they land in both the graph and the entity
+vector DB. Adds `transaction`, `transaction_category` (summary
+aggregate), `account`, `document` node kinds — the latter names embed
+`/store/<uuid>/` so LLM citations survive regex parsing back into
+doc_ids. `python -m extraction extract-structured [--dry-run]`.
+Closes `aggregation-expenses` eval case from 0.00 → 1.00 doc_coverage.
+
+### Phase 4.6 — OCR routing via corrections
+`overrides.ocr_backend` + `overrides.content_md_override_path` on the
+source correction. `ingestion/ocr_backends.py::run_ocrmac_on_pdf`
+renders each PDF page via pdf2image at 200 dpi, OCRs with Apple Vision
+(French first). `python -m ingestion reocr <doc_id> [--backend ocrmac]`
+writes corrected markdown to `corrections/source/<doc_id>.md`, updates
+the correction YAML. `corrections.overlay.resolve_content` returns the
+corrected body when present; `extract_documents` consumes it. On
+Certificat Benjamin (degraded Docling, no date): 945 → 1802 chars,
+document_date populated via user-edited overlay.
+
+### Eval surface expansion — 3 → 11 cases (commit 7e653c1)
+Added: `children-medical-history`, `prescribed-medications`,
+`employment-intel`, `owned-vehicles`, `tax-timeline`,
+`family-composition`, `property-acquisition-price`,
+`identity-documents`. Cases cover every life-domain present in the
+corpus; gate every future phase against this suite.
+
+### Phase 5.1 — retrieval diagnostics
+`extraction/diagnostics.py` + `python -m extraction diagnose
+"<question>"` + `python -m extraction diagnose-corpus` + `python -m
+evaluation --diagnose [--case <id>]`. Zero behavior change — probes
+`entity_vdb / chunks_vdb / relationships_vdb / rerank` per query and
+reports per-stage retention of `expected_documents`. Revealed the
+dominant bottleneck: **entity and relation vdbs find target docs
+reliably, but chunks_vdb drops them silently** and the reranker only
+trims the chunks_vdb subset.
+
+### Phase 5.2 — per-doc summary chunks
+`extraction/retrieval_enhance.py::write_doc_summary_chunks` upserts one
+compact summary per doc into chunks_vdb — filename + filename tokens +
+date + id + key (non-numeric) entity names + pack-produced structured
+highlights. Deliberately NO body-content head (competition with
+Docling content chunks measurably regressed eval). `python -m
+extraction enhance-retrieval`. chunks_vdb retention went from ~50% of
+target docs to ~85%.
+
+### Phase 5.4 — answer-shaped index nodes
+`extraction/index_nodes.py`: pure planner emitting **Profile:\<name\>**
+for every entity with ≥N docs and **Catalog:\<entity_type\>** for every
+declared type with ≥M entities across ≥N docs. Descriptions embed
+`/store/<uuid>/` paths. 41 → 68 index nodes across the 32-doc corpus;
+fully corpus-agnostic (no filenames, entity names, or query phrases in
+the builder). `python -m extraction build-indexes [--dry-run]`.
+Philosophical shift recorded: the KG is now a **retrieval cache** as
+much as a semantic model — user approved since surface area is
+corrections/rules/memory/queries, not raw graph nodes.
+
+### temperature=0 fix (commit cfa7da8)
+OpenRouter was load-balancing Gemini calls across provider instances
+with different seeds, causing `run_all_multi` to report spurious
+per-case deltas that single-runs contradicted. `extraction/llm.py`
+defaults `temperature=0.0`. Two identical `python -m evaluation
+--runs 1` invocations now produce byte-identical output; reliable
+before/after metric for every future phase.
+
+### Phase 5.5b — LLM document classifier
+One call per doc at ingest time (~\$0.0005/doc), closed 13-tag
+vocabulary (`work | healthcare | finance | property | vehicle | identity
+| family | legal | education | travel | food | administrative |
+other`), robust JSON parser, `DocumentMetadata.doc_context: list[str]`.
+`python -m ingestion <path> [--no-classify]` opt-out for air-gapped
+mode; `python -m ingestion classify [--doc-id X]` retroactively
+classifies existing store. Tags propagate to summary chunks + per-doc
+lines on Profile / Catalog entries. On all 32 docs, classifications
+inspected and correct (passport→identity, payslip→work/finance,
+medical cert→healthcare, etc.).
+
+**Failed experiments worth recording** (not shipped):
+  - Phase 5.3 (citation discipline prompt extension): net-regressed
+    doc_coverage 0.40 → 0.28. Longer prompts dilute existing guidance.
+  - Phase 5.5 (deriving doc-context from entity-type distribution):
+    dossiers médicaux without enough `medication`/`diagnosis` entities
+    mis-tagged `activity/animal/food`; tightening thresholds produced
+    empty tags on most docs. Heuristics over extraction-noise counts
+    generalize worse than a direct LLM classifier over the body.
+  - Phase 5.5b's first shape (aggregated "Primary contexts" header in
+    profiles): measured regression on cross-context queries
+    (cross-doc-person 0.60 → 0.00); reverted to per-doc context only.
+
+## Current state (end of 2026-04-18)
+
+- **Tests**: 356 passing (`python -m pytest -q -m "not integration"`).
+- **Corpus**: 32 docs across `raw/` (18) + `raw-2/` (14). Both
+  ingested, extracted, summarized, indexed, classified.
+- **Graph**: 2386 entities, 1902 edges in `extraction_store/`. 18 of
+  22 pack types populated. 68 synthetic index nodes. 32 summary
+  chunks. 50 structured transaction/account/document nodes.
+- **Corrections pending**: 9 source, 2 entity-type buckets (450 entries),
+  17 alias clusters.
+- **Eval baseline** (temp=0, reproducible, 11 cases):
+  - mean doc_coverage   = 0.62
+  - mean entity_coverage = 0.86
+  - mean fact_coverage   = 0.91
+  - passing = 3/11 (aggregation-expenses,
+    property-acquisition-price, identity-documents)
+- **Commit trail** (most recent first):
+  - `2c14ac6` — Phase 5.5b LLM doc classifier
+  - `0809221` — gitignore raw-\*/
+  - `cfa7da8` — temperature=0 for reproducible decoding
+  - `7d1cbdf` — Phase 5.4 answer-shaped index nodes
+  - `44f5a40` — Phase 5.2 per-doc summary chunks
+  - `ea366f0` — Phase 5.1 retrieval diagnostics
+  - `7e653c1` — 8 new eval cases across life-domains
+  - `8eb8554` — Phase 4.6 OCR routing (ocrmac backend)
+  - `d643b0a` — Phase 4.5 Transaction schema + bank extractor
+  - `ff3e2a3` — Phase 4 personal_documents pack + type composition
+  - `77aa50a` — Phase 3.7 apply derivation corrections
+  - `510f6f8` — Phase 3.6 derivation corrections
+  - `9ad5c26` — inline YAML hints via ruamel
+  - `165852e` — Phase 3.5 source corrections
+
+## Known weaknesses (measured, not yet addressed)
+
+- **LLM citation format variability** — sometimes cites bare filenames
+  instead of `/store/<uuid>/` paths; `extract_document_ids` then
+  returns `[]` and doc_coverage drops to 0 even when the answer is
+  substantively correct. Fixable by prompt tuning if needed, but carries
+  overfitting risk (Phase 5.3 taught this).
+- **Weak/inconsistent entity extraction on table-heavy docs** —
+  payslips and tax forms yield mostly numeric entities; the pack's
+  semantic types (role, employer, medication, etc.) are under-generated
+  by the LLM on these docs. Classifier + answer-shaped indexes
+  compensate but don't solve the root.
+- **Cross-context drift with bigger corpora** — `cross-doc-person`
+  regressed as more Intel work docs joined the corpus; the LLM fixates
+  on the dense work cluster. Expected as corpora grow; addressable via
+  better cross-context retrieval or query-intent hints.
+
 ## Phases remaining
 
-Phase 3.5a/b from earlier planning is **replaced** by a single unified
-**corrections framework** (the architecture above).
-
-- **Phase 3.5 — corrections framework** (NEXT): `corrections/` core
-  module — pydantic schemas, YAML read/write, doubts emitter, overlay
-  applier, `python -m corrections review` CLI for listing pending
-  files. Source corrections is the first applier (ingestion hooks).
-  Extends naturally to derivation + packs + memory using the same
-  pattern.
-- **Phase 3.6 — derivation corrections** (after source proves the
-  pattern): entity-type overrides, alias veto / alias affirm. Uses the
-  same framework, different subdir.
-- **Phase 4 — first pack (`packs/personal_finance/`)**: bank-statement
-  extractor + Transaction/Category schema. Ships its own doubts
-  emitter + override YAML using the corrections framework. Fixes the
-  `aggregation-expenses` case deterministically.
-- **Phase 5 — relation-type induction**: cluster edge descriptions
-  across the graph to surface candidate predicates. Corrections from
-  earlier phases become labeled training data for tuning this.
-- **Phase 6 — memory / business rules**: workflow-layer `rules.yaml`
-  evaluated at query time. Deferred until the workflow layer itself
-  exists (LangGraph or similar per the downstream vision).
+- **Phase 5.3 (revisit)** — generic LLM-citation discipline. Options
+  include: post-processing the answer to insert `/store/<uuid>/`
+  references from cited entity/chunk IDs; or a tighter
+  `temporal_user_prompt` extension (prior attempt regressed, so
+  approach carefully with full 11-case measurement).
+- **Phase 5 (original — relation-type induction)** — cluster edge
+  descriptions to surface candidate predicates. Lower priority now
+  that answer-shaped nodes handle aggregation queries; revisit when
+  richer semantics are needed.
+- **Phase 6 — memory / business rules** — workflow-layer `rules.yaml`
+  applied at query time. Blocked on the workflow layer itself
+  (LangGraph or similar).
+- **FastAPI surface** (intent.md §48) — expose the KG via
+  `/search`, `/entity/{id}`, `/provenance/{fact_id}`, `/diff`. KG is
+  materially solid enough to start this.
+- **Sovereign LLM** — swap OpenRouter/Gemini for a local backend
+  (Gemma, llama.cpp, ollama) for the classifier + extraction + query
+  LLM calls. Config change only; all call-sites go through
+  `extraction/llm.py`.
+- **Stronger per-doc-kind extraction** — use `doc_context` tags to
+  route to specialized prompts (a payslip prompt that forces `role`
+  and `employer` extraction; a medical prompt that forces `medication`
+  and `diagnosis`). Natural next move but requires careful prompt
+  engineering per doc-kind.
 
 ---
 
 ## Resuming in a fresh session — quick map
 
 - **Repo root**: `/Users/sboutet/projects/my-memory`
-- **Branch**: `master`, tree clean as of 2026-04-18
-- **Tests**: `source venv/bin/activate && python -m pytest -q -m "not integration"` → 165 passing
-- **Dogfood corpus**: `raw/*` (9 PDFs + 2 unsupported formats), ingest via `python -m ingestion raw/`; extract via `python -m extraction extract`; query via `python -m extraction query "..."`; eval via `python -m evaluation --runs 3`.
-- **Latest eval (post-Phase 2 temporal annotations)**: mean
-  `ent_coverage = 1.00`, `fact_coverage = 1.00`, `doc_coverage = 0.27`.
-- **Commit trail** (most recent first):
-  - `69bf6e3` — Phase 3 pack framework + intent pivot
-  - `bb91b93` — Phase 2 temporal annotations
-  - `8f7cef8` — multi-run eval
-  - `c741fe4` — Phase 1 alias resolution
-  - `a557cd1` — cross-encoder reranker
-  - `7a26ceb` — Phase 0 eval harness
-  - `3ce4626` — textual-date heuristic hardening
-  - `b91faff` — document_date at ingestion + temporal user prompt
-  - `0112fb0` — query CLI + free-text doc-id parser
-  - `655228c` — Layer 3 extraction wrapper (taxonomy + provenance)
-- **Next action**: Phase 3.5 — corrections framework. Start with pure
-  schemas + tests, then hook into ingestion as the first applier.
+- **Branch**: `master`, tree clean.
+- **Tests**: `source venv/bin/activate && python -m pytest -q -m "not integration"` → 356 passing.
+- **Corpus**: `raw/` + `raw-2/` = 32 docs, ingested in `store/`.
+- **Extraction store**: `extraction_store/` — 2386 entities, 68 index nodes, 32 summary chunks.
+- **Pipelines** (all local-only except LLM calls):
+  - Ingest: `python -m ingestion <path> [--no-classify]`
+  - Re-OCR: `python -m ingestion reocr <doc_id> [--backend ocrmac]`
+  - Re-classify: `python -m ingestion classify [--doc-id X]`
+  - Extract: `python -m extraction extract`
+  - Dedupe: `python -m extraction dedupe [--apply]`
+  - Emit corrections: `python -m extraction emit-corrections`
+  - Apply corrections: `python -m extraction apply-corrections [--apply]`
+  - Extract structured: `python -m extraction extract-structured [--dry-run]`
+  - Enhance retrieval: `python -m extraction enhance-retrieval`
+  - Build indexes: `python -m extraction build-indexes [--dry-run]`
+  - Annotate temporal: `python -m extraction annotate-temporal`
+  - Query: `python -m extraction query "..."`
+  - Diagnose: `python -m extraction diagnose "..."` / `diagnose-corpus`
+  - Review corrections: `python -m corrections review [source|entity-types|aliases] [--all]`
+  - Show one correction: `python -m corrections show <slug-or-doc-id>`
+  - Eval: `python -m evaluation --runs 3` (temp=0, reproducible)
+  - Eval diagnostics: `python -m evaluation --diagnose [--case <id>]`
+- **Latest eval (end-of-Phase-5.5b, temp=0)**: mean
+  `doc_coverage = 0.62`, `ent_coverage = 0.86`, `fact_coverage = 0.91`;
+  passing `3/11` (aggregation-expenses, property-acquisition-price,
+  identity-documents).
+- **Next action options**: see "Phases remaining" above — recommended
+  starting direction on resume is either the sovereign LLM switch
+  (infrastructure, unblocks other work) or the doc-kind-routed
+  extraction prompts (measurable improvement on cases like
+  employment-intel that have weak entity extraction).
