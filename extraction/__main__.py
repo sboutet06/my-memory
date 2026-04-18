@@ -103,6 +103,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-packs", action="store_true",
         help="Disable pack discovery (core taxonomy only)",
     )
+    p_extract.add_argument(
+        "--no-focus-hints", action="store_true",
+        help="Skip per-doc `[EXTRACTION FOCUS: …]` prefixes derived from pack hints",
+    )
     p_extract.add_argument("-v", "--verbose", action="store_true")
 
     p_temporal = sub.add_parser(
@@ -292,13 +296,17 @@ def _emit_alias_corrections(ambiguous_groups: list[list[str]], corrections_root:
 
 async def _run_extract(store_root: Path, working_dir: Path,
                        corrections_root: Path | None,
-                       packs_dir: Path | None, no_packs: bool) -> int:
+                       packs_dir: Path | None, no_packs: bool,
+                       no_focus_hints: bool) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
     config.require_api_key()
 
     packs = _load_packs(packs_dir, no_packs)
     config = _config_with_packs(config, packs)
+    # `--no-focus-hints` skips only the extraction hints; packs still
+    # contribute taxonomy + structured injection.
+    focus_packs = [] if no_focus_hints else packs
 
     docs = discover_store_docs(store_root)
     if not docs:
@@ -310,7 +318,7 @@ async def _run_extract(store_root: Path, working_dir: Path,
     rag = await build_rag(working_dir=working_dir, config=config)
     try:
         inserted = await extract_documents(
-            rag, docs, corrections_root=resolved_corr,
+            rag, docs, corrections_root=resolved_corr, packs=focus_packs,
         )
         pp_stats = await post_process(rag, allowed_entity_types=config.entity_types)
         stats = await graph_stats(rag)
@@ -786,7 +794,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "extract":
         return asyncio.run(_run_extract(
             args.store, args.working_dir, args.corrections_root,
-            args.packs_dir, args.no_packs,
+            args.packs_dir, args.no_packs, args.no_focus_hints,
         ))
     if args.cmd == "annotate-temporal":
         return asyncio.run(_run_annotate_temporal(args.store, args.working_dir, args.dry_run))

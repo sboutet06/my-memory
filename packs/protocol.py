@@ -43,6 +43,11 @@ class Pack(Protocol):
     #     Retrieval-friendly lines to splice into `doc_id`'s summary
     #     chunk. One line per pack-produced aggregate / structured
     #     highlight worth surfacing to the embedder.
+    #   extraction_hints(metadata) -> list[str]
+    #     Entity types to prioritize when extracting from this doc,
+    #     typically derived from `metadata.doc_context`. Core prepends
+    #     `[EXTRACTION FOCUS: …]` to the doc body when non-empty.
+    #     Empty list → no hint (full taxonomy applies).
 
     def matches(self, metadata: dict, content_md: str) -> bool:
         """True if this pack should handle the given ingested document.

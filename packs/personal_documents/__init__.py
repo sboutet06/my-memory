@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from packs.personal_documents.focus import extraction_hints as _extraction_hints
 from packs.personal_documents.injector import (
     LOW_SIGNAL_TYPES,
     inject_structured as _inject_structured,
@@ -98,6 +99,14 @@ class _PersonalDocumentsPack:
     async def summary_extras_for_doc(self, rag, doc_id: str) -> list[str]:
         """Retrieval-friendly extras to splice into `doc_id`'s summary chunk."""
         return await _summary_extras_for_doc(rag, doc_id)
+
+    def extraction_hints(self, metadata: dict) -> list[str]:
+        """Focus entity types for this doc based on its `doc_context` tags.
+
+        Empty list → no hint (LLM falls back to the full taxonomy). Core
+        prepends a single `[EXTRACTION FOCUS: ...]` line when non-empty.
+        """
+        return _extraction_hints(metadata)
 
 
 PACK = _PersonalDocumentsPack()

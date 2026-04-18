@@ -80,11 +80,54 @@ def _prepend_date_header(text: str, document_date: str | None) -> str:
     return f"[DOCUMENT DATE: {document_date}]\n\n{text}"
 
 
+def _prepend_extraction_focus(text: str, focus_types: list[str]) -> str:
+    """Prefix `[EXTRACTION FOCUS: ...]` when packs return hints for this doc.
+
+    Biases the LLM toward the listed entity types on table-heavy /
+    numeric-dense docs (payslips, tax forms). No-op when the list is
+    empty — falls back to the full taxonomy.
+    """
+    if not focus_types:
+        return text
+    joined = ", ".join(focus_types)
+    return (
+        f"[EXTRACTION FOCUS: prioritize entities of these types: {joined}.]\n\n"
+        f"{text}"
+    )
+
+
+def _resolve_extraction_hints(packs: Iterable[object], metadata: dict) -> list[str]:
+    """Union focus types from each pack's `extraction_hints(metadata)` hook.
+
+    Packs without the hook contribute nothing; ordering is first-seen
+    across registration order. Duplicates dropped.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for pack in packs or ():
+        hook = getattr(pack, "extraction_hints", None)
+        if not callable(hook):
+            continue
+        try:
+            hints = hook(metadata) or []
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("pack %r extraction_hints failed: %s",
+                           getattr(pack, "name", "?"), exc)
+            continue
+        for t in hints:
+            if t in seen:
+                continue
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 async def extract_documents(
     rag: LightRAG,
     docs: Iterable[tuple[Path, dict]],
     *,
     corrections_root: Path | None = None,
+    packs: Iterable[object] = (),
 ) -> int:
     """Insert the given docs into `rag`. Returns count inserted.
 
@@ -101,10 +144,13 @@ async def extract_documents(
     from corrections.io import load_source_correction
     from corrections.overlay import apply_metadata_overlay, resolve_content
 
+    packs_list = list(packs) if packs else []
+
     texts: list[str] = []
     ids: list[str] = []
     file_paths: list[str] = []
     overlay_hits = 0
+    focus_hits = 0
     for md_path, meta in docs:
         raw = md_path.read_text(encoding="utf-8")
         correction = None
@@ -116,13 +162,22 @@ async def extract_documents(
                 overlay_hits += 1
         else:
             effective = raw
-        texts.append(_prepend_date_header(effective, meta.get("document_date")))
+
+        body = _prepend_date_header(effective, meta.get("document_date"))
+        focus_types = _resolve_extraction_hints(packs_list, meta)
+        if focus_types:
+            focus_hits += 1
+        body = _prepend_extraction_focus(body, focus_types)
+
+        texts.append(body)
         ids.append(meta["document_id"])
         file_paths.append(str(md_path.resolve()))
     if not texts:
         return 0
     if overlay_hits:
         logger.info("Applied content overlay on %d/%d docs", overlay_hits, len(texts))
+    if focus_hits:
+        logger.info("Applied extraction focus hints on %d/%d docs", focus_hits, len(texts))
     logger.info("Extracting from %d document(s)", len(texts))
     await rag.ainsert(texts, ids=ids, file_paths=file_paths)
     return len(texts)
