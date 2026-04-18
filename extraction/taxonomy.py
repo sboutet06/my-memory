@@ -27,5 +27,10 @@ def normalize_entity_type(
     if current in allowed:
         node["entity_type"] = current
         return False
+    # Preserve the LLM-supplied type so downstream consumers (e.g. the
+    # derivation corrections emitter) can surface the original guess as
+    # evidence rather than losing it to the fallback bucket.
+    if current:
+        node["original_entity_type"] = current
     node["entity_type"] = fallback
     return True

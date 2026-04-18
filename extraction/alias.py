@@ -106,6 +106,7 @@ def cluster_entities(
     threshold: float = DEFAULT_THRESHOLD,
     clusterable_types: Iterable[str] = DEFAULT_CLUSTERABLE_TYPES,
     require_lexical_containment: bool = True,
+    ambiguous_out: list[list[str]] | None = None,
 ) -> list[list[str]]:
     """Group `names` into clusters of likely-same-entity.
 
@@ -120,6 +121,12 @@ def cluster_entities(
       for a fuzzier, user-reviewed pass.
 
     Returns clusters in insertion order; singletons included.
+
+    If `ambiguous_out` is given, it is populated with the list of
+    ambiguous-neighbour groups (each a list of surface names that the
+    algorithm found mutually similar but which did not form a clique,
+    so they were dropped from any merge). Use to surface these as
+    human review candidates.
     """
     n = len(names)
     if n == 0:
@@ -178,6 +185,18 @@ def cluster_entities(
                 if bi in ambiguous or bi <= ai:
                     continue
                 uf.union(indices[ai], indices[bi])
+
+        if ambiguous_out is not None and ambiguous:
+            # For each ambiguous node, record the group {itself ∪ its neighbors},
+            # deduplicated across ambiguous seeds that share a neighbourhood.
+            seen_groups: set[tuple[str, ...]] = set()
+            for ai in ambiguous:
+                group_idxs = sorted({ai} | neighbors[ai])
+                group_names = tuple(sorted(names[indices[gi]] for gi in group_idxs))
+                if group_names in seen_groups:
+                    continue
+                seen_groups.add(group_names)
+                ambiguous_out.append(list(group_names))
 
     components: dict[int, list[str]] = {}
     seen_roots: list[int] = []

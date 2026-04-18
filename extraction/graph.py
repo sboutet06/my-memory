@@ -276,10 +276,12 @@ async def resolve_aliases(
     # `make_embedding_func` already requests `normalize_embeddings=True`,
     # so `A @ A.T` is cosine similarity.
 
+    ambiguous_groups: list[list[str]] = []
     clusters = cluster_entities(
         names, embeddings, types,
         threshold=threshold,
         clusterable_types=clusterable_types,
+        ambiguous_out=ambiguous_groups,
     )
 
     plan: list[dict] = []
@@ -313,7 +315,24 @@ async def resolve_aliases(
         "merged": merged,
         "dry_run": dry_run,
         "plan": plan,
+        "ambiguous_groups": ambiguous_groups,
     }
+
+
+async def snapshot_nodes(rag: LightRAG) -> dict[str, dict]:
+    """Return `{name: node_dict}` for every entity in the graph.
+
+    Used by downstream (e.g. corrections emitters) to reason about the
+    current state without pulling in LightRAG's storage objects.
+    """
+    kg = rag.chunk_entity_relation_graph
+    labels = await kg.get_all_labels()
+    out: dict[str, dict] = {}
+    for name in labels:
+        node = await kg.get_node(name)
+        if node is not None:
+            out[name] = dict(node)
+    return out
 
 
 async def graph_stats(rag: LightRAG) -> dict:

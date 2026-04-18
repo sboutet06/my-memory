@@ -11,6 +11,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from lightrag import QueryParam
 
+from corrections.derivation_emitter import (
+    emit_alias_corrections,
+    emit_entity_type_buckets,
+)
+from corrections.derivation_io import (
+    load_alias_correction,
+    load_entity_type_bucket,
+    merge_alias_correction,
+    merge_entity_type_bucket,
+    save_alias_correction,
+    save_entity_type_bucket,
+)
 from extraction.config import ExtractionConfig
 from extraction.alias import DEFAULT_THRESHOLD
 from extraction.graph import (
@@ -22,6 +34,7 @@ from extraction.graph import (
     graph_stats,
     post_process,
     resolve_aliases,
+    snapshot_nodes,
 )
 from extraction.provenance import extract_document_ids
 
@@ -39,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract.add_argument(
         "--working-dir", type=Path, default=DEFAULT_WORKING_DIR,
         help=f"LightRAG working directory (default: {DEFAULT_WORKING_DIR})",
+    )
+    p_extract.add_argument(
+        "--corrections-root", type=Path, default=None,
+        help="Corrections root (default: <store>/../corrections)",
     )
     p_extract.add_argument("-v", "--verbose", action="store_true")
 
@@ -69,7 +86,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply", action="store_true",
         help="Actually execute the merges (default: dry-run, print plan only)",
     )
+    p_dedupe.add_argument(
+        "--corrections-root", type=Path, default=None,
+        help="Corrections root (default: <working-dir>/../corrections)",
+    )
     p_dedupe.add_argument("-v", "--verbose", action="store_true")
+
+    p_emit = sub.add_parser(
+        "emit-corrections",
+        help="Snapshot the extracted graph and write derivation correction files",
+    )
+    p_emit.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_emit.add_argument(
+        "--corrections-root", type=Path, default=None,
+        help="Corrections root (default: <working-dir>/../corrections)",
+    )
+    p_emit.add_argument(
+        "--threshold", type=float, default=DEFAULT_THRESHOLD,
+        help="Alias-cluster cosine threshold (dry-run only)",
+    )
+    p_emit.add_argument("-v", "--verbose", action="store_true")
 
     p_query = sub.add_parser("query", help="Query the extracted knowledge graph")
     p_query.add_argument("question", type=str, help="Natural-language question")
@@ -90,7 +126,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run_extract(store_root: Path, working_dir: Path) -> int:
+def _resolve_corrections_root(explicit: Path | None, default_parent: Path) -> Path:
+    return explicit if explicit is not None else default_parent.parent / "corrections"
+
+
+def _emit_entity_type_corrections(graph_snapshot: dict, corrections_root: Path) -> int:
+    """Emit/update entity-type bucket files. Returns # buckets written."""
+    buckets = emit_entity_type_buckets(graph_snapshot)
+    for bucket in buckets:
+        existing = load_entity_type_bucket(corrections_root, bucket.bucket)
+        merged = merge_entity_type_bucket(existing, bucket.entries, bucket=bucket.bucket)
+        save_entity_type_bucket(corrections_root, merged)
+    return len(buckets)
+
+
+def _emit_alias_corrections(ambiguous_groups: list[list[str]], corrections_root: Path) -> int:
+    fresh = emit_alias_corrections(ambiguous_groups=ambiguous_groups)
+    for c in fresh:
+        existing = load_alias_correction(corrections_root, c.cluster)
+        merged = merge_alias_correction(existing, c)
+        save_alias_correction(corrections_root, merged)
+    return len(fresh)
+
+
+async def _run_extract(store_root: Path, working_dir: Path,
+                       corrections_root: Path | None) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
     config.require_api_key()
@@ -100,18 +160,27 @@ async def _run_extract(store_root: Path, working_dir: Path) -> int:
         print(f"No ingested docs found under {store_root}", file=sys.stderr)
         return 1
 
+    resolved_corr = _resolve_corrections_root(corrections_root, store_root)
+
     rag = await build_rag(working_dir=working_dir, config=config)
     try:
         inserted = await extract_documents(rag, docs)
         pp_stats = await post_process(rag, allowed_entity_types=config.entity_types)
         stats = await graph_stats(rag)
+        snapshot = await snapshot_nodes(rag)
     finally:
         await rag.finalize_storages()
+
+    buckets_written = _emit_entity_type_corrections(snapshot, resolved_corr)
 
     report = {
         "inserted": inserted,
         "post_process": pp_stats,
         "graph": stats,
+        "corrections": {
+            "entity_type_buckets_written": buckets_written,
+            "root": str(resolved_corr),
+        },
         "config": {
             "llm_model": config.llm_model,
             "embed_model": config.embed_model,
@@ -142,7 +211,8 @@ async def _run_annotate_temporal(store_root: Path, working_dir: Path, dry_run: b
     return 0
 
 
-async def _run_dedupe(working_dir: Path, threshold: float, apply: bool) -> int:
+async def _run_dedupe(working_dir: Path, threshold: float, apply: bool,
+                      corrections_root: Path | None) -> int:
     load_dotenv(Path.cwd() / ".env")
     config = ExtractionConfig.from_env()
     config.require_api_key()  # fail fast; embedding stack reused from extraction
@@ -150,6 +220,8 @@ async def _run_dedupe(working_dir: Path, threshold: float, apply: bool) -> int:
     if not working_dir.exists():
         print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
         return 1
+
+    resolved_corr = _resolve_corrections_root(corrections_root, working_dir)
 
     rag = await build_rag(working_dir=working_dir, config=config)
     try:
@@ -159,8 +231,51 @@ async def _run_dedupe(working_dir: Path, threshold: float, apply: bool) -> int:
     finally:
         await rag.finalize_storages()
 
-    # Compact per-cluster plan
+    ambiguous = report.get("ambiguous_groups", [])
+    alias_files_written = _emit_alias_corrections(ambiguous, resolved_corr)
+    report["corrections"] = {
+        "alias_files_written": alias_files_written,
+        "root": str(resolved_corr),
+    }
+    # Drop the raw groups from the summary now that they're persisted.
+    report.pop("ambiguous_groups", None)
+
     print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+async def _run_emit_corrections(working_dir: Path, corrections_root: Path | None,
+                                threshold: float) -> int:
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    if not working_dir.exists():
+        print(f"No extraction store at {working_dir}. Run `extract` first.", file=sys.stderr)
+        return 1
+
+    resolved_corr = _resolve_corrections_root(corrections_root, working_dir)
+
+    rag = await build_rag(working_dir=working_dir, config=config)
+    try:
+        snapshot = await snapshot_nodes(rag)
+        dedupe = await resolve_aliases(
+            rag, config, threshold=threshold, dry_run=True,
+        )
+    finally:
+        await rag.finalize_storages()
+
+    entity_buckets = _emit_entity_type_corrections(snapshot, resolved_corr)
+    alias_files = _emit_alias_corrections(
+        dedupe.get("ambiguous_groups", []), resolved_corr,
+    )
+
+    print(json.dumps({
+        "corrections_root": str(resolved_corr),
+        "entity_type_buckets": entity_buckets,
+        "alias_files": alias_files,
+        "graph_entities": len(snapshot),
+    }, indent=2))
     return 0
 
 
@@ -220,11 +335,17 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.cmd == "extract":
-        return asyncio.run(_run_extract(args.store, args.working_dir))
+        return asyncio.run(_run_extract(args.store, args.working_dir, args.corrections_root))
     if args.cmd == "annotate-temporal":
         return asyncio.run(_run_annotate_temporal(args.store, args.working_dir, args.dry_run))
     if args.cmd == "dedupe":
-        return asyncio.run(_run_dedupe(args.working_dir, args.threshold, args.apply))
+        return asyncio.run(_run_dedupe(
+            args.working_dir, args.threshold, args.apply, args.corrections_root,
+        ))
+    if args.cmd == "emit-corrections":
+        return asyncio.run(_run_emit_corrections(
+            args.working_dir, args.corrections_root, args.threshold,
+        ))
     if args.cmd == "query":
         return asyncio.run(_run_query(args.question, args.mode, args.working_dir, args.json))
 
