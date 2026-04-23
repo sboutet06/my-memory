@@ -435,23 +435,167 @@ medical cert→healthcare, etc.).
     profiles): measured regression on cross-context queries
     (cross-doc-person 0.60 → 0.00); reverted to per-doc context only.
 
-## Current state (end of 2026-04-18)
+---
 
-- **Tests**: 356 passing (`python -m pytest -q -m "not integration"`).
+## Session of 2026-04-18 — citation, retrieval, fragility
+
+Opened with a codebase audit (Task #1) that surfaced three latent issues
+and four candidate phases. All three issues fixed, two new phases
+delivered, plus a scorer-fragility fix. `doc_coverage` climbed from
+0.62 to 0.92 across the session; passing cases 3/11 → 7/11; 356 → 404
+tests.
+
+### Refactor — pack decoupling (commit 5300695)
+
+`extraction/structured.py` was 100% bank-statement-specific code that
+imported `packs.personal_documents.schemas.transaction` directly; core
+also hardcoded `transaction` / `transaction_category` / `account` in
+its `_LOW_SIGNAL_TYPES` filters, silently blocking any future pack from
+shipping retrieval-infra types. Moved to
+`packs/personal_documents/injector.py`. Three new optional Pack hooks:
+- `low_signal_types: tuple[str, ...]` — unioned with core defaults at
+  Profile/Catalog index time + summary-chunk filters.
+- `async inject_structured(rag, result)` — pack owns its node/edge
+  schema; core hands the opaque `extract_structured` dict back.
+- `async summary_extras_for_doc(rag, doc_id)` — per-doc retrieval
+  extras for `chunks_vdb` summaries.
+`plan_index_nodes` gained `extra_low_signal_types`, and
+`write_index_nodes` / `write_doc_summary_chunks` accept an optional
+`packs` iterable. CLI wires packs through every post-processing step.
+
+### Phase 5.3b — deterministic References injection (commit 14c9af9)
+
+Diagnose pass across the 11 eval cases split failures into two buckets:
+(a) real retrieval misses (Facture_250, Bulletin Paie, Déclaration
+Impôts 2010 absent from rerank top-20), (b) citation-format drift (for
+e.g. `owned-vehicles` the answer substance was perfect but the LLM's
+trailing `### References` block used entity names like
+`[4] Document d'Information Sur Le Produit d'Assurance AUTO`,
+unparseable by `extract_document_ids`).
+
+LightRAG's declared `include_references: bool = False` on `QueryParam`
+is dead code (declared in `base.py`, never used in `operate.py`). The
+real authoritative reference list lives on `aquery_llm().raw_data.data
+.references` — `aquery` silently drops it for its "backwards-compat"
+string return. Switch both `extraction query` and `evaluation.runner`
+to `aquery_llm`; new module `extraction/references.py` parses the
+references list and rewrites the answer's trailing References block
+into canonical `- [n] /store/<uuid>/content.md` form. Idempotent,
+preserves inline `[n]` refs, strips stale LLM-authored blocks.
+
+Also fixed an eval-scoring bug surfaced along the way: macOS reports
+filenames in NFD (`é` = `e` + `U+0301`) while `cases.json` authors edit
+in NFC (`é` = `U+00E9`). `startswith()` silently returned False for
+accented filenames — shaving doc_coverage for every case involving
+`Déclaration Impôts`. NFC-normalize both sides in
+`score_document_coverage`.
+
+Measured impact: `doc_coverage 0.62 → 0.76`; `owned-vehicles 0.00 →
+1.00`; `cross-doc-person 0.20 → 0.40`; `temporal-addresses 0.00 →
+0.33`.
+
+### Phase 5.6 — doc-kind-routed extraction hints (commit 0022d7d)
+
+Payslips and tax forms extract mostly numeric entities even though the
+pack taxonomy exposes `role`, `employer`, `medication`, etc. — the LLM
+just doesn't force itself to use those types on table-heavy docs.
+
+New pack hook `extraction_hints(metadata) → list[str]` maps a doc's
+`doc_context` classifier tags (Phase 5.5b vocabulary) to a short focus
+list. Core prepends one `[EXTRACTION FOCUS: …]` line to the doc body
+before `rag.ainsert`. Generic in core; `packs/personal_documents/
+focus.py` owns the `tag → types` table. Tag `other` deliberately maps
+to nothing (no bad nudge on unclassified docs); focus list capped at 10
+types for multi-tagged docs to keep prompt overhead bounded. Opt-out
+via `python -m extraction extract --no-focus-hints` for ablation.
+
+Full corpus re-extract cost ~\$0.35, ~8 min wall time. Backup of the
+pre-5.6 graph kept at `extraction_store.pre-5.6/` for the session
+(removed on confirmation).
+
+Measured impact: `doc_coverage 0.76 → 0.85`; `ent_coverage 0.86 →
+0.89`; passing 3/11 → 5/11. Flips:
+- `children-medical-history 0.75 → 1.00` — healthcare hint forced
+  `medication`/`diagnosis`/`medical_provider`.
+- `employment-intel 0.50 → 1.00` — work hint pulled `role`/`employer`
+  off the Bulletin Paie, long-standing retrieval miss resolved.
+- `tax-timeline 0.33 → 0.67` — `Déclaration Impôts 2010` surfaced.
+
+### Phase 5.7 — Profile/Catalog reference expansion (commit e8b5dc4)
+
+Inspected `data.entities` on a cross-doc-person query: seven
+`Profile: Sébastien …` variants were in the retrieved context (alias
+resolution hadn't merged these synthetic nodes — only the underlying
+entity names). Each contributed just its *primary* file_path to the
+references list — LightRAG's `generate_reference_list_from_chunks`
+reads `file_path` from CHUNKS only, dropping the breadth carried by
+Profile/Catalog descriptions (which embed `/store/<uuid>/content.md`
+paths for every member doc).
+
+`extract_references_from_query_result` now also parses
+`data.entities`: for every entity named `Profile: …` or `Catalog: …`,
+pull `/store/<uuid>/` doc_ids out of its description and merge them
+into the references list with new reference_ids (preserving the
+chunk-derived primary indices). Dedups by doc_id.
+
+### Scorer fragility — accent folding + OR alternatives (same commit)
+
+Two silent eval fragilities:
+- `Zoé` in `expected_entities` didn't match `Zoe` in the answer (common
+  LLM unaccented drift) → owned-vehicles scored ent=0 despite correct
+  content.
+- `ordonnance` in `expected_facts` didn't match `prescription` in the
+  LLM paraphrase → prescribed-medications scored fact=0 despite
+  pertinent answer.
+
+`_fold(s)` = NFKD decompose → strip combining marks → lowercase → trim;
+any `|` in an expected entry splits into OR alternatives (one minimal
+cases.json edit: `ordonnance` → `ordonnance|prescription`).
+
+Measured impact (5.7 + fragility together):
+`doc_coverage 0.85 → 0.92`, `ent_coverage 0.89 → 0.98`,
+`fact_coverage 0.91 → 1.00`, passing 5/11 → 7/11. Flips:
+`prescribed-medications`, `owned-vehicles`. Doc_coverage gains:
+`cross-doc-person 0.40 → 0.80`, `temporal-addresses 0.33 → 0.67`
+(Profile expansion doing its job).
+
+### Tidy — configurable temperature (commit 02396a4)
+
+`extraction/llm.py` hardcoded `kwargs.setdefault("temperature", 0.0)`.
+Promoted to `ExtractionConfig.temperature` (default 0.0, env
+`EXTRACTION_TEMPERATURE`). Default preserved — zero behavior change,
+but unblocks sampling experiments and makes implicit behavior visible.
+
+## Current state (end of 2026-04-18 session 2)
+
+- **Tests**: 404 passing (`python -m pytest -q -m "not integration"`).
 - **Corpus**: 32 docs across `raw/` (18) + `raw-2/` (14). Both
   ingested, extracted, summarized, indexed, classified.
-- **Graph**: 2386 entities, 1902 edges in `extraction_store/`. 18 of
-  22 pack types populated. 68 synthetic index nodes. 32 summary
-  chunks. 50 structured transaction/account/document nodes.
-- **Corrections pending**: 9 source, 2 entity-type buckets (450 entries),
-  17 alias clusters.
-- **Eval baseline** (temp=0, reproducible, 11 cases):
-  - mean doc_coverage   = 0.62
-  - mean entity_coverage = 0.86
-  - mean fact_coverage   = 0.91
-  - passing = 3/11 (aggregation-expenses,
+- **Graph**: 2229 entities, 2060 edges in `extraction_store/` (after
+  full Phase 5.6 re-extract with focus hints). 87 synthetic index
+  nodes. 32 summary chunks. 22 structured transaction/category/
+  account/document nodes.
+- **Corrections pending** (from dedupe re-run): 13 alias clusters
+  emitted. Source + entity-type buckets from prior session carried.
+- **Eval** (temp=0, reproducible, 11 cases):
+  - mean doc_coverage   = 0.92
+  - mean entity_coverage = 0.98
+  - mean fact_coverage   = 1.00
+  - passing = 7/11 (aggregation-expenses, children-medical-history,
+    prescribed-medications, employment-intel, owned-vehicles,
     property-acquisition-price, identity-documents)
+- **Session trajectory** (baseline → this session end):
+  - `doc_coverage`: 0.62 → 0.92 (+48% relative)
+  - `entity_coverage`: 0.86 → 0.98
+  - `fact_coverage`: 0.91 → 1.00
+  - passing: 3/11 → 7/11
 - **Commit trail** (most recent first):
+  - `e8b5dc4` — Phase 5.7 Profile expansion + scorer fragility
+  - `02396a4` — temperature configurable (`EXTRACTION_TEMPERATURE`)
+  - `0022d7d` — Phase 5.6 doc-kind-routed extraction hints
+  - `14c9af9` — Phase 5.3b deterministic References injection + NFC
+  - `5300695` — pack decoupling (move bank injector out of core)
+  - `8d24fbc` — docs(intent): Phases 3.5–5.5b recap
   - `2c14ac6` — Phase 5.5b LLM doc classifier
   - `0809221` — gitignore raw-\*/
   - `cfa7da8` — temperature=0 for reproducible decoding
@@ -469,47 +613,50 @@ medical cert→healthcare, etc.).
 
 ## Known weaknesses (measured, not yet addressed)
 
-- **LLM citation format variability** — sometimes cites bare filenames
-  instead of `/store/<uuid>/` paths; `extract_document_ids` then
-  returns `[]` and doc_coverage drops to 0 even when the answer is
-  substantively correct. Fixable by prompt tuning if needed, but carries
-  overfitting risk (Phase 5.3 taught this).
-- **Weak/inconsistent entity extraction on table-heavy docs** —
-  payslips and tax forms yield mostly numeric entities; the pack's
-  semantic types (role, employer, medication, etc.) are under-generated
-  by the LLM on these docs. Classifier + answer-shaped indexes
-  compensate but don't solve the root.
-- **Cross-context drift with bigger corpora** — `cross-doc-person`
-  regressed as more Intel work docs joined the corpus; the LLM fixates
-  on the dense work cluster. Expected as corpora grow; addressable via
-  better cross-context retrieval or query-intent hints.
+- **Residual cross-doc retrieval gaps** — `cross-doc-person` still at
+  0.80 (Facture_250 not retrievable under "Sébastien" queries);
+  `temporal-addresses` 0.67, `tax-timeline` 0.67. Profile expansion
+  closed the easy gains; what remains is docs that simply aren't in
+  the retrieved entity/chunk set at all. Expected to grow with corpus
+  size; addressable by (a) stronger per-entity Profile completeness
+  via pre-retrieval entity-to-doc expansion, or (b) query-intent hints
+  that broaden initial entity_vdb top-K.
+- **LLM answer exhaustiveness** — `family-composition` ent=0.80: LLM
+  names 4 of 5 expected family members despite all being in context.
+  Generic model diligence issue, addressable via prompt tuning with
+  strict before/after measurement.
+- **Profile/Catalog alias fragmentation** — cross-doc-person query
+  retrieved 7 distinct `Profile: …` nodes for the same person
+  (`Profile: Sébastien Boutet`, `Profile: Sebastien Boutet`,
+  `Profile: Monsieur Sebastien Boutet`, `Profile: Sebastien Jean
+  Christophe Boutet`, `Profile: Mr Boutet Sebastien`, etc.). Alias
+  resolution runs BEFORE index-node creation; Profile names are built
+  from whatever surface-form entities survived. Consider running
+  alias resolution on entity names a second time, or generating
+  Profile nodes only for alias-clustered canonicals.
 
 ## Phases remaining
 
-- **Phase 5.3 (revisit)** — generic LLM-citation discipline. Options
-  include: post-processing the answer to insert `/store/<uuid>/`
-  references from cited entity/chunk IDs; or a tighter
-  `temporal_user_prompt` extension (prior attempt regressed, so
-  approach carefully with full 11-case measurement).
-- **Phase 5 (original — relation-type induction)** — cluster edge
-  descriptions to surface candidate predicates. Lower priority now
-  that answer-shaped nodes handle aggregation queries; revisit when
-  richer semantics are needed.
+- **FastAPI surface** (intent.md §48) — expose the KG via
+  `/search`, `/entity/{id}`, `/provenance/{fact_id}`, `/diff`. KG is
+  materially solid enough (92/98/100 eval) to start this.
+- **Sovereign LLM** — swap OpenRouter/Gemini for a local backend
+  (Gemma, llama.cpp, ollama). Config change only now that
+  `temperature` is configurable and all LLM call-sites go through
+  `extraction/llm.py`. `doc_context` classifier also uses
+  `extraction.config` so the swap affects it too.
 - **Phase 6 — memory / business rules** — workflow-layer `rules.yaml`
   applied at query time. Blocked on the workflow layer itself
   (LangGraph or similar).
-- **FastAPI surface** (intent.md §48) — expose the KG via
-  `/search`, `/entity/{id}`, `/provenance/{fact_id}`, `/diff`. KG is
-  materially solid enough to start this.
-- **Sovereign LLM** — swap OpenRouter/Gemini for a local backend
-  (Gemma, llama.cpp, ollama) for the classifier + extraction + query
-  LLM calls. Config change only; all call-sites go through
-  `extraction/llm.py`.
-- **Stronger per-doc-kind extraction** — use `doc_context` tags to
-  route to specialized prompts (a payslip prompt that forces `role`
-  and `employer` extraction; a medical prompt that forces `medication`
-  and `diagnosis`). Natural next move but requires careful prompt
-  engineering per doc-kind.
+- **Profile dedup on canonical aliases** — per the weakness above,
+  cheap tightening of index-node generation.
+- **Cross-doc retrieval expansion** — when a query mentions a named
+  entity present in the graph, pre-populate top-K with that entity's
+  full `document_ids` list. Would close the remaining 4 failing cases.
+- **Phase 5 (original — relation-type induction)** — cluster edge
+  descriptions to surface candidate predicates. Low priority now that
+  answer-shaped nodes + Profile expansion handle breadth queries;
+  revisit when richer semantics are actually needed.
 
 ---
 
@@ -517,14 +664,15 @@ medical cert→healthcare, etc.).
 
 - **Repo root**: `/Users/sboutet/projects/my-memory`
 - **Branch**: `master`, tree clean.
-- **Tests**: `source venv/bin/activate && python -m pytest -q -m "not integration"` → 356 passing.
+- **Tests**: `source venv/bin/activate && python -m pytest -q -m "not integration"` → 404 passing.
 - **Corpus**: `raw/` + `raw-2/` = 32 docs, ingested in `store/`.
-- **Extraction store**: `extraction_store/` — 2386 entities, 68 index nodes, 32 summary chunks.
+- **Extraction store**: `extraction_store/` — 2229 entities, 87 index
+  nodes, 32 summary chunks, 22 structured nodes.
 - **Pipelines** (all local-only except LLM calls):
   - Ingest: `python -m ingestion <path> [--no-classify]`
   - Re-OCR: `python -m ingestion reocr <doc_id> [--backend ocrmac]`
   - Re-classify: `python -m ingestion classify [--doc-id X]`
-  - Extract: `python -m extraction extract`
+  - Extract: `python -m extraction extract [--no-focus-hints]`
   - Dedupe: `python -m extraction dedupe [--apply]`
   - Emit corrections: `python -m extraction emit-corrections`
   - Apply corrections: `python -m extraction apply-corrections [--apply]`
@@ -532,18 +680,21 @@ medical cert→healthcare, etc.).
   - Enhance retrieval: `python -m extraction enhance-retrieval`
   - Build indexes: `python -m extraction build-indexes [--dry-run]`
   - Annotate temporal: `python -m extraction annotate-temporal`
-  - Query: `python -m extraction query "..."`
+  - Query: `python -m extraction query "..."` (uses `aquery_llm`,
+    deterministic References injection)
   - Diagnose: `python -m extraction diagnose "..."` / `diagnose-corpus`
   - Review corrections: `python -m corrections review [source|entity-types|aliases] [--all]`
   - Show one correction: `python -m corrections show <slug-or-doc-id>`
   - Eval: `python -m evaluation --runs 3` (temp=0, reproducible)
   - Eval diagnostics: `python -m evaluation --diagnose [--case <id>]`
-- **Latest eval (end-of-Phase-5.5b, temp=0)**: mean
-  `doc_coverage = 0.62`, `ent_coverage = 0.86`, `fact_coverage = 0.91`;
-  passing `3/11` (aggregation-expenses, property-acquisition-price,
-  identity-documents).
-- **Next action options**: see "Phases remaining" above — recommended
-  starting direction on resume is either the sovereign LLM switch
-  (infrastructure, unblocks other work) or the doc-kind-routed
-  extraction prompts (measurable improvement on cases like
-  employment-intel that have weak entity extraction).
+- **Latest eval** (end of session 2, temp=0): mean
+  `doc_coverage = 0.92`, `ent_coverage = 0.98`, `fact_coverage = 1.00`;
+  passing `7/11`.
+- **Next action options** (in descending leverage):
+  1. Cross-doc retrieval expansion — close the last 4 failing cases
+     (`cross-doc-person`, `temporal-addresses`, `tax-timeline`,
+     `family-composition`). Pre-retrieval entity-to-doc expansion
+     when the query mentions a known entity.
+  2. FastAPI surface — KG is stable enough to expose.
+  3. Sovereign LLM swap — infrastructure move; unblocks air-gapped
+     deployments.
