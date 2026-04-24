@@ -15,7 +15,7 @@ from typing import Optional
 
 import logging
 
-from facts.models import FactResult
+from facts.models import FactResult, Predicate
 from facts.store import DuplicateIDError, FactStore
 from packs.personal_documents.focus import extraction_hints as _extraction_hints
 from packs.personal_documents.injector import (
@@ -80,6 +80,31 @@ class _PersonalDocumentsPack:
     # Entity types this pack injects as retrieval-infra; core hides them
     # from Profile/Catalog and doc-summary views.
     low_signal_types: tuple[str, ...] = LOW_SIGNAL_TYPES
+
+    # Semantic contracts for predicates this pack produces.
+    # time_varying=True → new value supersedes old (Phase 8 supersession engine).
+    # allow_multi=True  → multiple values coexist; no Conflict emitted.
+    # Unknown predicates default to time_varying=False, allow_multi=False → Conflict.
+    predicates: tuple[Predicate, ...] = (
+        Predicate(name="transaction", time_varying=False, allow_multi=True,
+                  description="bank/card transaction; multiple per account are expected"),
+        Predicate(name="address", time_varying=True, allow_multi=False,
+                  description="residential or professional address; changes over time"),
+        Predicate(name="employer", time_varying=True, allow_multi=False,
+                  description="current employer; changes over time"),
+        Predicate(name="role", time_varying=True, allow_multi=False,
+                  description="job title or professional role; changes over time"),
+        Predicate(name="birthdate", time_varying=False, allow_multi=False,
+                  description="date of birth; invariant — two different values = Conflict"),
+        Predicate(name="marital_status", time_varying=True, allow_multi=False,
+                  description="marital status; changes over time"),
+        Predicate(name="salary", time_varying=True, allow_multi=False,
+                  description="gross/net salary; changes over time"),
+        Predicate(name="passport_number", time_varying=False, allow_multi=False,
+                  description="passport document number; invariant per issuance"),
+        Predicate(name="social_security_id", time_varying=False, allow_multi=False,
+                  description="national social security / NIR number; invariant"),
+    )
 
     def matches(self, metadata: dict, content_md: str) -> bool:
         """Claim every document for the taxonomy-augmentation purpose.
