@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from facts.detector import detect_all_conflicts
 from facts.predicates import PredicateRegistry
 from facts.store import FactStore
-from packs import discover_packs, PackRegistry
+from packs import discover_packs
 
 
 def _default_store_dir() -> Path:
@@ -19,8 +19,7 @@ def _default_store_dir() -> Path:
 def cmd_detect_conflicts() -> None:
     load_dotenv(Path.cwd() / ".env")
     store = FactStore(_default_store_dir())
-    pack_registry = PackRegistry()
-    discover_packs(pack_registry)
+    pack_registry = discover_packs(Path.cwd() / "packs")
     pred_registry = PredicateRegistry.from_packs(pack_registry.list())
     conflicts = detect_all_conflicts(store, pred_registry)
     print(f"Detected {len(conflicts)} conflict(s).")

@@ -459,7 +459,15 @@ async def _run_extract_structured(store_root: Path, working_dir: Path,
     }
 
     if not dry_run and pack_results:
+        from facts.store import FactStore
+        from packs.registry import PackRegistry
+
         rag = await build_rag(working_dir=working_dir, config=config)
+        facts_store = FactStore(Path(__file__).parent.parent / "facts" / "store")
+        # Build a PackRegistry from the already-loaded packs list.
+        pack_registry = PackRegistry()
+        for p in packs:
+            pack_registry.register(p)
         try:
             mutations: list[dict] = []
             for pack, result in pack_results:
@@ -468,9 +476,24 @@ async def _run_extract_structured(store_root: Path, working_dir: Path,
                     continue
                 m = await hook(rag, result)
                 mutations.append({"pack": pack.name, **m})
+
+            # Wire facts layer: one call per unique result dict.
+            from facts.orchestrator import run_inject_facts
+            seen_results: set[int] = set()
+            for _pack, result in pack_results:
+                if id(result) in seen_results:
+                    continue
+                seen_results.add(id(result))
+                fr = run_inject_facts(pack_registry, result, facts_store, rag)
+                if not fr.is_empty():
+                    logger.info(
+                        "inject_facts: %d facts, %d claims (kind=%s)",
+                        len(fr.facts), len(fr.claims), result.get("kind", "?"),
+                    )
         finally:
             await rag.finalize_storages()
         report["mutations"] = mutations
+        report["facts_injected"] = facts_store.fact_count
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
