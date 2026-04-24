@@ -1,11 +1,13 @@
 """Derivation-layer correction schemas.
 
-Two kinds of derivation corrections:
+Three kinds of derivation corrections:
   - EntityTypeBucket: batch review of entities sharing a doubtful type
     (typically the `concept` fallback bucket). Humans scan rows, set
     `override_type` where obvious, flip status=reviewed.
   - AliasCorrection: one file per ambiguous cluster. Human picks
     action = accept | merge | veto | split.
+  - ConflictCorrection: one file per detected conflict. Human picks
+    a resolution: winner, coexist, or temporal_supersede order.
 """
 from __future__ import annotations
 
@@ -94,3 +96,39 @@ class AliasCorrection(BaseModel):
     def effective_action(self) -> AliasAction:
         action = self.overrides.get("action")
         return AliasAction(action) if action else AliasAction.ACCEPT
+
+
+# ----------------------------- Conflicts ----------------------------------
+
+
+class ConflictResolution(BaseModel):
+    """Human decision for resolving a Conflict.
+
+    Exactly one resolution mode should be set:
+      winner: <fact_id>                   — one fact is correct
+      coexist: true                       — multiple values are simultaneously valid
+      temporal_supersede_order: [old, new] — ordered earliest → latest
+    """
+
+    winner: Optional[str] = None
+    coexist: bool = False
+    temporal_supersede_order: list[str] = Field(default_factory=list)
+
+
+class ConflictFactEntry(BaseModel):
+    """One competing fact in a ConflictCorrection file."""
+
+    fact_id: str
+    value: str = ""
+    source_doc: str = ""
+
+
+class ConflictCorrection(BaseModel):
+    """One YAML file per detected Conflict. Human edits the resolution section."""
+
+    conflict_id: str
+    subject_id: str
+    predicate: str
+    status: str = "open"  # open | reviewed
+    competing_facts: list[ConflictFactEntry] = Field(default_factory=list)
+    resolution: Optional[ConflictResolution] = None
