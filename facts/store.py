@@ -130,6 +130,31 @@ class FactStore:
     def open_conflicts(self) -> list[Conflict]:
         return [c for c in self._conflicts.values() if c.status == "open"]
 
+    def all_conflicts(self) -> list[Conflict]:
+        return list(self._conflicts.values())
+
+    def replace_conflicts(self, conflicts: list[Conflict]) -> None:
+        """Overwrite the conflicts store — for batch detect-all-conflicts runs.
+
+        Facts and claims are append-only; conflicts are computed state and
+        may be replaced wholesale when the detector re-runs.
+        """
+        self._conflicts = {c.id: c for c in conflicts}
+        with self._conflicts_path.open("w", encoding="utf-8") as fh:
+            for c in conflicts:
+                fh.write(c.model_dump_json() + "\n")
+
     @property
     def conflict_count(self) -> int:
         return len(self._conflicts)
+
+    # -------------------------------------------------------- combined helpers
+
+    def facts_for_subject_predicate(self, subject_id: str, predicate: str) -> list[Fact]:
+        return [
+            f for f in self._facts.values()
+            if f.subject_id == subject_id and f.predicate == predicate
+        ]
+
+    def conflicts_for_fact(self, fact_id: str) -> list[Conflict]:
+        return [c for c in self._conflicts.values() if fact_id in c.competing_fact_ids]
