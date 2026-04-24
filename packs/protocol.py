@@ -48,6 +48,12 @@ class Pack(Protocol):
     #     typically derived from `metadata.doc_context`. Core prepends
     #     `[EXTRACTION FOCUS: …]` to the doc body when non-empty.
     #     Empty list → no hint (full taxonomy applies).
+    #   inject_facts(rag, facts_store, result) -> FactResult
+    #     Build and persist Fact + Claim records for the structured
+    #     extraction result produced by `extract_structured`. Called by
+    #     `facts.orchestrator.run_inject_facts` after `inject_structured`.
+    #     Packs that have no deterministic extractor can omit this hook —
+    #     core uses `getattr(pack, 'inject_facts', None)` for backward-compat.
 
     def matches(self, metadata: dict, content_md: str) -> bool:
         """True if this pack should handle the given ingested document.

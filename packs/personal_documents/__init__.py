@@ -13,16 +13,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import logging
+
+from facts.models import FactResult
+from facts.store import DuplicateIDError, FactStore
 from packs.personal_documents.focus import extraction_hints as _extraction_hints
 from packs.personal_documents.injector import (
     LOW_SIGNAL_TYPES,
     inject_structured as _inject_structured,
+    plan_transaction_facts as _plan_transaction_facts,
     summary_extras_for_doc as _summary_extras_for_doc,
 )
 from packs.personal_documents.router import (
     detect_doc_kind,
     extract_structured as _extract_structured,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -99,6 +106,34 @@ class _PersonalDocumentsPack:
     async def summary_extras_for_doc(self, rag, doc_id: str) -> list[str]:
         """Retrieval-friendly extras to splice into `doc_id`'s summary chunk."""
         return await _summary_extras_for_doc(rag, doc_id)
+
+    def inject_facts(self, rag, facts_store: FactStore, result: dict) -> FactResult:
+        """Pack hook: write Facts + Claims derived from extract_structured output.
+
+        Called by facts.orchestrator.run_inject_facts for every registered
+        pack. DuplicateIDError on repeated runs is swallowed — idempotent.
+        Returns the FactResult produced (written or skipped) for inspection.
+        """
+        kind = result.get("kind")
+        if kind != "bank_statement":
+            return FactResult()
+
+        transactions = result.get("transactions") or []
+        fact_result = _plan_transaction_facts(transactions)
+
+        for fact in fact_result.facts:
+            try:
+                facts_store.append_fact(fact)
+            except DuplicateIDError:
+                _logger.debug("fact %s already in store, skipping", fact.id)
+
+        for claim in fact_result.claims:
+            try:
+                facts_store.append_claim(claim)
+            except DuplicateIDError:
+                _logger.debug("claim %s already in store, skipping", claim.id)
+
+        return fact_result
 
     def extraction_hints(self, metadata: dict) -> list[str]:
         """Focus entity types for this doc based on its `doc_context` tags.
