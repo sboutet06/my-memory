@@ -566,7 +566,7 @@ Expected commit count: 10–14.
 
 ### Tasks (outline — expand when Phase 6 lands)
 
-- [ ] **7.1 Predicate registry in core**
+- [x] **7.1 Predicate registry in core**
   - `facts/predicates.py`. Registry entries: `name`, `time_varying:
     bool`, `allow_multi: bool`, optional `description`.
   - Packs declare predicates via a `Pack.predicates: tuple[Predicate,
@@ -574,14 +574,14 @@ Expected commit count: 10–14.
   - Core default for unknown predicates: `time_varying=False,
     allow_multi=False` — unknown-variance defaults to Conflict (D2).
 
-- [ ] **7.2 Conflict detector**
+- [x] **7.2 Conflict detector**
   - On each fact write (or a batch reconcile job), compare against
     existing facts with the same `(subject, predicate)`.
   - If not `allow_multi` and values differ, emit a `Conflict` record
     with status `open`.
   - Batch reconcile: `python -m facts detect-conflicts`.
 
-- [ ] **7.3 Conflict correction YAML**
+- [x] **7.3 Conflict correction YAML**
   - `corrections/derivation/conflicts/<conflict_id>.yaml` with seeded
     doubts + override section.
   - Resolution options: `winner: <fact_id>`, `coexist: true`,
@@ -589,13 +589,13 @@ Expected commit count: 10–14.
   - Reuse ruamel.yaml + inline hint comments (Phase 3.5 pattern).
   - Idempotent re-apply: applying N times = same state.
 
-- [ ] **7.4 API**
+- [x] **7.4 API**
   - `GET /conflicts?status=open&limit=N`.
   - `GET /conflicts/{id}` — full detail with competing facts + claims.
   - `POST /conflicts/{id}/resolve` — stub; actual resolution still
     flows through YAML + Git.
 
-- [ ] **7.5 Adversarial eval bucket**
+- [x] **7.5 Adversarial eval bucket**
   - Generate 5 synthetic cases (D6 approved):
     - 2 contradiction pairs (time-varying: e.g. two different
       addresses ~5 years apart; time-invariant: e.g. two different

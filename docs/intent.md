@@ -784,3 +784,123 @@ No 🔴 items.
 Phase 7 — Contradictions as first-class. Predicate registry in core,
 Conflict detector, YAML resolution UX. STOP before starting: ask user for
 (1) synthetic corpus plan approval, (2) lawyer-meeting predicate requirements.
+
+---
+
+## Phase 7 — Contradictions as first-class (session 4, 2026-04-24)
+
+**Goal**: predicate registry, conflict detector, YAML resolution UX, conflict
+API endpoints, adversarial eval bucket.
+
+### Pre-conditions satisfied
+
+- D6 (synthetic corpus) approved by user.
+- Lawyer meeting not yet held (2026-04-26); user confirmed to stop where legal
+  predicate decisions are needed. Phase 7 predicate design uses generic
+  predicates (address, birthdate, transaction, etc.) — legal-specific predicates
+  deferred to a legal pack (post Phase 7).
+- Orphan `evaluation/runner.py` change from Phase 6.6 committed first.
+
+### Key decisions taken
+
+- **PredicateRegistry** built via `PredicateRegistry.from_packs([...])` — packs
+  declare `predicates: tuple[Predicate, ...]`; unknown predicates default to
+  `time_varying=False, allow_multi=False` (D2: unknown-variance → Conflict).
+- **personal_documents pack** declares 9 predicates: `transaction` (allow_multi),
+  `address/employer/role/marital_status/salary` (time_varying), and
+  `birthdate/passport_number/social_security_id` (invariant → Conflict on divergence).
+- **Conflict detector**: two entry points: `detect_conflict_for_fact()` (per-fact,
+  on append) + `detect_all_conflicts()` (batch scan, replaces conflicts.jsonl
+  idempotently, preserving resolved status on re-run).
+- **FactStore** extended: `facts_for_subject_predicate()`, `conflicts_for_fact()`,
+  `all_conflicts()`, `replace_conflicts()` (batch overwrite for idempotent
+  detect-all runs).
+- **Conflict correction YAML**: `corrections/derivation/conflicts/<subj>__<pred>.yaml`
+  with inline resolution hints (winner / coexist / temporal_supersede_order).
+  `apply_conflict_corrections()` is dry-run by default; `--apply` writes back to
+  FactStore. Emit is idempotent (skips existing files).
+- **API**: `GET /conflicts?status=&limit=`, `GET /conflicts/{id}` (full detail:
+  conflict + competing facts + claims per fact), `POST /conflicts/{id}/resolve`
+  (501 stub — resolution stays YAML+Git). `GET /facts/{id}` now returns real
+  conflicts list.
+- **Adversarial eval**: `score_conflict_detection_coverage()` measures whether the
+  answer surfaces both/all conflicting values. Same accent+case-insensitive OR-alt
+  matching as other metrics. `expected_conflicts` added to `EvalCase`;
+  `conflict_detection_coverage` to `EvalCaseResult` and aggregated. Wired into
+  `passed` check.
+- **Synthetic corpus** (`raw-synthetic/`): 8 docs, Jean Pierre Dupont (fictional).
+  2 birthdate-conflict docs, 2 address-conflict docs, 2 near-duplicate invoice docs,
+  2 contract-update docs. `.gitignore` exception added (`!raw-synthetic/`).
+- 5 adversarial cases added to `evaluation/cases.json` (21 total).
+
+### What was implemented (tasks 7.1 → 7.5)
+
+- `facts/predicates.py`: `PredicateRegistry`.
+- `packs/personal_documents/__init__.py`: `predicates` tuple added.
+- `facts/detector.py`: `detect_conflict_for_fact()`, `detect_all_conflicts()`.
+- `facts/__main__.py`: `python -m facts detect-conflicts`.
+- `facts/store.py`: `facts_for_subject_predicate`, `conflicts_for_fact`,
+  `all_conflicts`, `replace_conflicts`.
+- `corrections/derivation_schemas.py`: `ConflictResolution`, `ConflictFactEntry`,
+  `ConflictCorrection`.
+- `corrections/conflict_io.py`: `emit_conflict_yaml`, `load_conflict_yaml`,
+  `write_conflict_yaml`, `apply_conflict_corrections`.
+- `api/main.py`: `GET /conflicts`, `GET /conflicts/{id}`,
+  `POST /conflicts/{id}/resolve` (501 stub); `GET /facts/{id}` updated.
+- `evaluation/scorer.py`: `score_conflict_detection_coverage`.
+- `evaluation/schema.py`: `EvalCase.expected_conflicts`,
+  `EvalCaseResult.conflict_detection_coverage`.
+- `evaluation/runner.py`: wires `cdc` into `score_case` + `passed`.
+- `evaluation/aggregate.py`: `mean/std_conflict_detection_coverage`.
+- `evaluation/cases.json`: 5 adversarial cases added.
+- `raw-synthetic/`: 8 synthetic docs + README.
+- Test count: 517 → 599 (+82 tests across 4 new test files).
+
+### What did NOT change
+
+- LightRAG internals — zero new touches.
+- Existing extraction pipeline — extract/dedupe/build-indexes unmodified.
+- Existing 16 eval cases (11 original + 5 Phase 6) — no expected_* changes.
+
+### Self-review (CLAUDE.md §7)
+
+| Axis | Status | Note |
+|------|--------|------|
+| Spec conformance | ✅ | All 7.1–7.5 implemented and committed |
+| Security OWASP | ⚠️ | No auth on API (same as Phase 6 — Phase 10 hardens) |
+| Resilience | ✅ | Bad YAML files logged+skipped in apply; idempotent detect-all |
+| Reliability | ✅ | replace_conflicts atomic; no partial-write corruption possible |
+| Resource pressure | ✅ | O(n) detect-all; no unbounded allocations |
+| Observability | ✅ | logger.info/warning at all apply/detect steps |
+| Testability | ✅ | 599 tests; all pure functions; API via TestClient |
+
+No 🔴 items.
+
+### Phase gate — pending e2e
+
+The unit gate is green (599 tests). The phase gate requires:
+1. Ingest `raw-synthetic/` corpus: `python -m ingestion raw-synthetic/`
+2. Re-extract: `python -m extraction extract`
+3. Run conflict detector: `python -m facts detect-conflicts`
+4. Run eval: `python -m evaluation --runs 3`
+   - Original 11 cases: `doc_coverage ≥ 0.92`, `entity_coverage ≥ 0.98`,
+     `fact_coverage ≥ 1.00`.
+   - 5 Phase 6 cases: `fact_provenance_coverage ≥ 0.80`.
+   - 5 adversarial cases: `conflict_detection_coverage ≥ 0.90` (pass criterion).
+5. User eyeballs output.
+
+**Note**: adversarial cases require the synthetic corpus to be ingested first.
+Until ingestion runs, adversarial cases will score 0.0 (expected — not a
+regression in the original 16 cases).
+
+### Stopped at
+
+Phase 7 lawyer-meeting predicate gate — legal-specific predicates (contract
+clauses, party roles, notarial dates) intentionally omitted. Will be
+re-evaluated after the 2026-04-26 meeting before designing a legal pack.
+
+### Next phase
+
+Phase 8 — Bitemporal validity and versioning. `valid_from / valid_to` on
+Fact, `ingestion_version` on Claim, supersession engine for time_varying
+predicates, `as_of` API query.
