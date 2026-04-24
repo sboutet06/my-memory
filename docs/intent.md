@@ -698,3 +698,89 @@ but unblocks sampling experiments and makes implicit behavior visible.
   2. FastAPI surface — KG is stable enough to expose.
   3. Sovereign LLM swap — infrastructure move; unblocks air-gapped
      deployments.
+
+---
+
+## Phase 6 — Fact model and provenance (session 3, 2026-04-24)
+
+**Goal**: overlay `Fact`/`Claim`/`Conflict` on top of LightRAG; wire
+bank-statement pack; API stub; extend eval; benchmark scaffold.
+
+### Key decisions taken
+
+- **Overlay, not replacement** (D-refactor locked): LightRAG entity/relation
+  store remains the retrieval substrate. Facts are a separate JSONL layer.
+- **Content-addressable IDs**: SHA-256 of `subject_id|predicate|canonical_value|source_doc_id`.
+  Computed via Pydantic `@computed_field` → recomputed on deserialization;
+  stored in JSON for API consumers. Collision = `DuplicateIDError`.
+- **JSONL append-only**: `facts/store/{facts,claims,conflicts}.jsonl`. Bad
+  lines logged+skipped; in-memory index rebuilt on init. Matches lesson
+  2026-04-15 (JSONL beats sqlite for short-lived audit trails).
+- **Pack hook pattern**: `inject_facts(rag, facts_store, result) -> FactResult`
+  optional hook via `getattr(pack, "inject_facts", None)`. Backward-compat:
+  packs without the hook pass silently.
+- **API stub**: FastAPI `GET /health` + `GET /facts/{fact_id}` (SHA-256
+  pattern validation → 422 on bad input; 404 on missing). No auth — Phase 10
+  hardens. `Depends(get_store)` pattern for testability.
+- **Eval extension**: `fact_provenance_coverage` metric added. 5 new cases
+  targeting bank-statement provenance (virement, carte, Roquefort, 2026).
+  Same accent+case-insensitive OR-alternative scoring as `fact_coverage`.
+- **Benchmark scaffold**: `benchmarks/runner.run(stage, model_list, ...)` swaps
+  only `config.llm_model` via `dataclasses.replace()` — caller's config never
+  mutated. Sequential per model (no parallel API calls). `case_limit` for cheap
+  smoke runs. Stage "query_answerer" only; extractor/embedder planned Phase 7.
+
+### What was implemented (tasks 6.1 → 6.6)
+
+- `facts/` package: `models.py` (Fact, Claim, Conflict, Predicate, FactResult),
+  `store.py` (FactStore JSONL), `orchestrator.py` (run_inject_facts),
+  `__init__.py`.
+- `packs/personal_documents/injector.py`: `plan_transaction_facts()` → one
+  Fact + one Claim per bank Transaction row.
+- `packs/personal_documents/__init__.py`: `inject_facts()` hook — calls
+  `plan_transaction_facts`, swallows `DuplicateIDError` for idempotency,
+  returns empty FactResult for non-bank-statement docs.
+- `packs/protocol.py`: `inject_facts` documented in Pack protocol.
+- `api/main.py` + `api/__main__.py`: FastAPI stub.
+- `evaluation/scorer.py`: `score_fact_provenance_coverage`.
+- `evaluation/schema.py`: `EvalCase.expected_provenance`, `EvalCaseResult.fact_provenance_coverage`.
+- `evaluation/runner.py`: `score_case` wires fpc; `run_all` accepts optional
+  `config` arg for benchmark runner.
+- `evaluation/aggregate.py`: `mean/std_fact_provenance_coverage` fields.
+- `evaluation/cases.json`: 5 new fact-provenance cases (total: 16).
+- `benchmarks/` package: `schema.py` (BenchmarkResult), `runner.py` (run()),
+  `README.md` (proposed model set + cost guard).
+- Test count: 404 → 517 (+113 tests across 6 new test files).
+
+### What did NOT change
+
+- LightRAG internals — zero new touches.
+- Extraction graph pipeline — `extract`, `dedupe`, `build-indexes` unmodified.
+- Existing 11 eval cases — no expected_documents/entities/facts changes.
+
+### Self-review (CLAUDE.md §7)
+
+| Axis | Status | Note |
+|------|--------|------|
+| Spec conformance | ✅ | All 6.1–6.6 implemented and committed |
+| Security OWASP | ⚠️ | No auth on API — documented V1 stub; `fact_id` regex-validated |
+| Resilience | ✅ | Bad JSONL lines skipped; pack hook exceptions caught |
+| Reliability | ✅ | Content-addressable IDs; append-only JSONL |
+| Resource pressure | ✅ | O(n) load, O(1) lookup; sequential benchmarks |
+| Observability | ✅ | logger.info per run, logger.warning on hook failures |
+| Testability | ✅ | 517 tests; API via TestClient; benchmarks via AsyncMock |
+
+No 🔴 items.
+
+### Pending before Phase 7
+
+- Run `python -m evaluation --runs 3` (needs live corpus + API key) and eyeball.
+- User approves benchmark model list before any paid sweep.
+- User confirms lawyer-meeting (≈ 2026-04-26) predicate requirements before
+  Phase 7 predicate design starts.
+
+### Next phase
+
+Phase 7 — Contradictions as first-class. Predicate registry in core,
+Conflict detector, YAML resolution UX. STOP before starting: ask user for
+(1) synthetic corpus plan approval, (2) lawyer-meeting predicate requirements.
