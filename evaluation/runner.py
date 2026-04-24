@@ -13,6 +13,7 @@ from lightrag import QueryParam
 from evaluation.schema import EvalCase, EvalCaseResult
 from evaluation.scorer import (
     count_forbidden,
+    score_conflict_detection_coverage,
     score_document_coverage,
     score_entity_coverage,
     score_fact_coverage,
@@ -58,8 +59,12 @@ def score_case(
     ent = score_entity_coverage(case.expected_entities, answer)
     fac = score_fact_coverage(case.expected_facts, answer)
     fpc = score_fact_provenance_coverage(case.expected_provenance, answer)
+    cdc = score_conflict_detection_coverage(case.expected_conflicts, answer)
     forbid = count_forbidden(case.forbidden_facts, answer)
-    passed = doc == 1.0 and ent == 1.0 and fac == 1.0 and fpc == 1.0 and forbid == 0
+    passed = (
+        doc == 1.0 and ent == 1.0 and fac == 1.0 and fpc == 1.0
+        and cdc == 1.0 and forbid == 0
+    )
     return EvalCaseResult(
         case_id=case.id,
         question=case.question,
@@ -70,6 +75,7 @@ def score_case(
         entity_coverage=ent,
         fact_coverage=fac,
         fact_provenance_coverage=fpc,
+        conflict_detection_coverage=cdc,
         forbidden_violations=forbid,
         passed=passed,
     )

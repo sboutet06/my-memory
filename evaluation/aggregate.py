@@ -27,6 +27,9 @@ class AggregatedCaseResult(BaseModel):
     mean_fact_provenance_coverage: float
     std_fact_provenance_coverage: float
 
+    mean_conflict_detection_coverage: float
+    std_conflict_detection_coverage: float
+
     mean_forbidden_violations: float
 
 
@@ -70,6 +73,7 @@ def aggregate_runs(runs: list[list[EvalCaseResult]]) -> list[AggregatedCaseResul
         ent_m, ent_s = _mean_std([s.entity_coverage for s in samples])
         fact_m, fact_s = _mean_std([s.fact_coverage for s in samples])
         fpc_m, fpc_s = _mean_std([s.fact_provenance_coverage for s in samples])
+        cdc_m, cdc_s = _mean_std([s.conflict_detection_coverage for s in samples])
         forbid_m, _ = _mean_std([float(s.forbidden_violations) for s in samples])
         pass_rate = sum(1 for s in samples if s.passed) / n_runs
         out.append(AggregatedCaseResult(
@@ -85,6 +89,8 @@ def aggregate_runs(runs: list[list[EvalCaseResult]]) -> list[AggregatedCaseResul
             std_fact_coverage=fact_s,
             mean_fact_provenance_coverage=fpc_m,
             std_fact_provenance_coverage=fpc_s,
+            mean_conflict_detection_coverage=cdc_m,
+            std_conflict_detection_coverage=cdc_s,
             mean_forbidden_violations=forbid_m,
         ))
     return out

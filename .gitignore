@@ -1,6 +1,8 @@
 # Personal data — never commit
 raw/
 raw-*/
+# Synthetic test corpus is NOT personal data — committed
+!raw-synthetic/
 store/
 
 # Secrets

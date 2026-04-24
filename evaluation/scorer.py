@@ -105,6 +105,19 @@ def score_fact_provenance_coverage(
     return _substring_coverage(expected_provenance, answer)
 
 
+def score_conflict_detection_coverage(
+    expected_conflicts: Iterable[str], answer: str,
+) -> float:
+    """Fraction of expected conflict indicators present in the answer.
+
+    An answer passes if it surfaces both/all conflicting values — meaning
+    the user can see the disagreement rather than having it silently resolved.
+    Same accent+case-insensitive matching with `|` OR alternatives.
+    Empty expected → 1.0 (no conflict expected for this case).
+    """
+    return _substring_coverage(expected_conflicts, answer)
+
+
 def count_forbidden(forbidden: Iterable[str], answer: str) -> int:
     """Number of forbidden entries present in the answer. Term-level count.
 

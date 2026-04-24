@@ -4,7 +4,10 @@
     {
       "id": "cross-doc-person",
       "question": "Qui est Sébastien Boutet et dans quels documents apparaît-il ?",
-      "tags": ["cross-doc", "identity"],
+      "tags": [
+        "cross-doc",
+        "identity"
+      ],
       "notes": "Baseline cross-document identity resolution. Should surface the same person across several heterogeneous docs.",
       "expected_documents": [
         "Facture_250",
@@ -13,25 +16,48 @@
         "RLV_CHQ",
         "Déclaration Impôts"
       ],
-      "expected_entities": ["Sébastien", "Boutet"],
-      "expected_facts": ["ingénieur"]
+      "expected_entities": [
+        "Sébastien",
+        "Boutet"
+      ],
+      "expected_facts": [
+        "ingénieur"
+      ]
     },
     {
       "id": "temporal-addresses",
       "question": "Quelles sont les adresses de résidence de Sébastien Boutet et comment ont-elles évolué dans le temps ? Indique la plus récente.",
-      "tags": ["temporal", "ordering"],
+      "tags": [
+        "temporal",
+        "ordering"
+      ],
       "notes": "Known-weak case. Current graph lists addresses but LLM inconsistently picks the most recent, and often cites Cagnes-sur-Mer (compromis-era) instead of Roquefort-les-Pins (post-acquisition, 2026 bank statement).",
-      "expected_documents": ["RLV_CHQ", "Compromis", "Déclaration Impôts"],
-      "expected_entities": ["Montauroux", "Cagnes", "Roquefort"],
-      "expected_facts": ["Roquefort"],
+      "expected_documents": [
+        "RLV_CHQ",
+        "Compromis",
+        "Déclaration Impôts"
+      ],
+      "expected_entities": [
+        "Montauroux",
+        "Cagnes",
+        "Roquefort"
+      ],
+      "expected_facts": [
+        "Roquefort"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "aggregation-expenses",
       "question": "Quelle est la catégorie de dépense la plus importante visible dans mes relevés bancaires ?",
-      "tags": ["aggregation", "table"],
+      "tags": [
+        "aggregation",
+        "table"
+      ],
       "notes": "Passes since Phase 4.5 structured-extraction injected transaction_category summary nodes. Transfer_out dominates at 911.40 EUR over 14 transactions.",
-      "expected_documents": ["RLV_CHQ"],
+      "expected_documents": [
+        "RLV_CHQ"
+      ],
       "expected_entities": [],
       "expected_facts": [],
       "forbidden_facts": []
@@ -39,7 +65,11 @@
     {
       "id": "children-medical-history",
       "question": "Quels suivis médicaux ont Gabriel, Benjamin et Sophia ?",
-      "tags": ["healthcare", "cross-doc", "family"],
+      "tags": [
+        "healthcare",
+        "cross-doc",
+        "family"
+      ],
       "notes": "Cross-child retrieval across pediatric healthcare docs. Exercises alias resolution on first names + healthcare pack types.",
       "expected_documents": [
         "Ordonnance Gabriel",
@@ -47,44 +77,76 @@
         "Dossier patient Benjamin",
         "Echographie Sophia"
       ],
-      "expected_entities": ["Gabriel", "Benjamin", "Sophia"],
+      "expected_entities": [
+        "Gabriel",
+        "Benjamin",
+        "Sophia"
+      ],
       "expected_facts": [],
       "forbidden_facts": []
     },
     {
       "id": "prescribed-medications",
       "question": "Quelles sont les prescriptions médicales présentes dans mes documents ?",
-      "tags": ["healthcare", "medication"],
+      "tags": [
+        "healthcare",
+        "medication"
+      ],
       "notes": "Tests the new `medication` / `procedure` pack types. Ordonnance Gabriel + Ordonnances Cabinet Urologie are the two prescription docs.",
-      "expected_documents": ["Ordonnance Gabriel", "Ordonnances Cabinet Urologie"],
+      "expected_documents": [
+        "Ordonnance Gabriel",
+        "Ordonnances Cabinet Urologie"
+      ],
       "expected_entities": [],
-      "expected_facts": ["ordonnance|prescription"],
+      "expected_facts": [
+        "ordonnance|prescription"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "employment-intel",
       "question": "Pour quelle entreprise ai-je travaillé et à quel poste ?",
-      "tags": ["work", "cross-doc"],
+      "tags": [
+        "work",
+        "cross-doc"
+      ],
       "notes": "Cross-references employment contract + payslip. Tests the new `employer` / `role` pack types. Intel Mobile Communications France, cadre / engineer.",
-      "expected_documents": ["Contrat de travail Intel", "Bulletin Paie"],
-      "expected_entities": ["Intel"],
-      "expected_facts": ["Intel"],
+      "expected_documents": [
+        "Contrat de travail Intel",
+        "Bulletin Paie"
+      ],
+      "expected_entities": [
+        "Intel"
+      ],
+      "expected_facts": [
+        "Intel"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "owned-vehicles",
       "question": "Quels véhicules apparaissent dans mes documents ?",
-      "tags": ["vehicle"],
+      "tags": [
+        "vehicle"
+      ],
       "notes": "Tests the new `vehicle` pack type. Two sources: MAAF insurance proposal + Renault Zoé order form.",
-      "expected_documents": ["Proposition auto", "bon commande zoe"],
-      "expected_entities": ["Zoé"],
+      "expected_documents": [
+        "Proposition auto",
+        "bon commande zoe"
+      ],
+      "expected_entities": [
+        "Zoé"
+      ],
       "expected_facts": [],
       "forbidden_facts": []
     },
     {
       "id": "tax-timeline",
       "question": "Quels documents fiscaux (déclarations ou paiements) ai-je pour la période 2010–2013 ?",
-      "tags": ["tax", "temporal"],
+      "tags": [
+        "tax",
+        "temporal"
+      ],
       "notes": "Three tax docs spanning 2010–2013: déclaration 2010, paiement locaux 2011, télérèglement IR février 2013. Tests temporal ordering across pre-2016 tax history.",
       "expected_documents": [
         "Déclaration Impôts 2010",
@@ -92,36 +154,66 @@
         "telereglement_IR"
       ],
       "expected_entities": [],
-      "expected_facts": ["2010", "2011", "2013"],
+      "expected_facts": [
+        "2010",
+        "2011",
+        "2013"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "family-composition",
       "question": "Quels sont les membres de la famille Boutet identifiables à travers les documents ?",
-      "tags": ["cross-doc", "family", "identity"],
+      "tags": [
+        "cross-doc",
+        "family",
+        "identity"
+      ],
       "notes": "Cross-doc family resolution. Five people appear across many docs: Sébastien (partout), Mylène El Kaim (compromis, zoe, RLV), Benjamin (certificat, dossier), Gabriel (ordonnance, lettre MV4), Sophia (échographie). Good test of alias resolution on short first names.",
       "expected_documents": [],
-      "expected_entities": ["Sébastien", "Mylène", "Benjamin", "Gabriel", "Sophia"],
+      "expected_entities": [
+        "Sébastien",
+        "Mylène",
+        "Benjamin",
+        "Gabriel",
+        "Sophia"
+      ],
       "expected_facts": [],
       "forbidden_facts": []
     },
     {
       "id": "property-acquisition-price",
       "question": "À quelle date et à quel prix l'acquisition de la résidence a-t-elle été conclue ?",
-      "tags": ["real-estate", "temporal", "amount"],
+      "tags": [
+        "real-estate",
+        "temporal",
+        "amount"
+      ],
       "notes": "Single-doc extraction: compromis signed 13 mai 2016 in Châteauneuf-Grasse, purchase price 627 000 EUR. Tests temporal + amount reasoning on a known doc.",
-      "expected_documents": ["Compromis"],
+      "expected_documents": [
+        "Compromis"
+      ],
       "expected_entities": [],
-      "expected_facts": ["2016", "627"],
+      "expected_facts": [
+        "2016",
+        "627"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "identity-documents",
       "question": "Quels documents d'identité apparaissent dans mes archives ?",
-      "tags": ["identity"],
+      "tags": [
+        "identity"
+      ],
       "notes": "Two ID docs in corpus: passport and national ID card (pc_seb). Both quality=degraded, tests that degraded-OCR signal still enables retrieval.",
-      "expected_documents": ["PasseportSeb", "pc_seb"],
-      "expected_entities": ["passeport"],
+      "expected_documents": [
+        "PasseportSeb",
+        "pc_seb"
+      ],
+      "expected_entities": [
+        "passeport"
+      ],
       "expected_facts": [],
       "expected_provenance": [],
       "forbidden_facts": []
@@ -129,57 +221,170 @@
     {
       "id": "fact-evidence-bank-tx",
       "question": "Quel document source contient les virements bancaires de mars 2026 ?",
-      "tags": ["provenance", "fact-level", "bank"],
+      "tags": [
+        "provenance",
+        "fact-level",
+        "bank"
+      ],
       "notes": "Phase 6 fact-provenance case: specific transactions → source document. Transaction nodes in LightRAG carry source_doc_id.",
-      "expected_documents": ["RLV_CHQ"],
+      "expected_documents": [
+        "RLV_CHQ"
+      ],
       "expected_entities": [],
       "expected_facts": [],
-      "expected_provenance": ["virement"],
+      "expected_provenance": [
+        "virement"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "fact-source-address",
       "question": "Quel document atteste de l'adresse à Roquefort-les-Pins ?",
-      "tags": ["provenance", "fact-level", "address"],
+      "tags": [
+        "provenance",
+        "fact-level",
+        "address"
+      ],
       "notes": "Phase 6 fact-provenance case: address fact → source document. Roquefort-les-Pins appears in the 2026 bank statement header.",
-      "expected_documents": ["RLV_CHQ"],
-      "expected_entities": ["Roquefort"],
+      "expected_documents": [
+        "RLV_CHQ"
+      ],
+      "expected_entities": [
+        "Roquefort"
+      ],
       "expected_facts": [],
-      "expected_provenance": ["Roquefort"],
+      "expected_provenance": [
+        "Roquefort"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "fact-list-by-source",
       "question": "Quels paiements par carte bancaire sont enregistrés dans mes relevés ?",
-      "tags": ["provenance", "fact-level", "bank"],
+      "tags": [
+        "provenance",
+        "fact-level",
+        "bank"
+      ],
       "notes": "Phase 6 fact-provenance case: list facts from source. Card-payment transaction nodes (type CARTE) should be visible.",
-      "expected_documents": ["RLV_CHQ"],
+      "expected_documents": [
+        "RLV_CHQ"
+      ],
       "expected_entities": [],
       "expected_facts": [],
-      "expected_provenance": ["carte"],
+      "expected_provenance": [
+        "carte"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "fact-confidence",
       "question": "Quels virements entrants apparaissent dans le relevé bancaire ?",
-      "tags": ["provenance", "fact-level", "bank"],
+      "tags": [
+        "provenance",
+        "fact-level",
+        "bank"
+      ],
       "notes": "Phase 6 fact-provenance case: incoming transfers. Tests retrievability of credit-direction transaction facts.",
-      "expected_documents": ["RLV_CHQ"],
+      "expected_documents": [
+        "RLV_CHQ"
+      ],
       "expected_entities": [],
       "expected_facts": [],
-      "expected_provenance": ["virement"],
+      "expected_provenance": [
+        "virement"
+      ],
       "forbidden_facts": []
     },
     {
       "id": "fact-extractor-version",
       "question": "Quelle est la période couverte par le relevé bancaire présent dans mes documents ?",
-      "tags": ["provenance", "fact-level", "bank"],
+      "tags": [
+        "provenance",
+        "fact-level",
+        "bank"
+      ],
       "notes": "Phase 6 fact-provenance case: source temporal metadata. Statement period annotation should be in graph.",
-      "expected_documents": ["RLV_CHQ"],
+      "expected_documents": [
+        "RLV_CHQ"
+      ],
       "expected_entities": [],
       "expected_facts": [],
-      "expected_provenance": ["2026"],
+      "expected_provenance": [
+        "2026"
+      ],
       "forbidden_facts": []
+    },
+    {
+      "id": "adversarial-birthdate-conflict",
+      "question": "Quelle est la date de naissance de Jean Pierre Dupont selon les documents disponibles ?",
+      "mode": "hybrid",
+      "expected_conflicts": [
+        "1980|janvier 1980",
+        "1982|mars 1982"
+      ],
+      "tags": [
+        "adversarial",
+        "conflict",
+        "time-invariant"
+      ],
+      "notes": "Two synthetic docs assert different birthdates (1980-01-15 vs 1982-03-22). System must surface both values. Pass = conflict_detection_coverage == 1.0"
+    },
+    {
+      "id": "adversarial-address-conflict",
+      "question": "Quelle est l adresse de Jean Pierre Dupont mentionnée dans les documents ?",
+      "mode": "hybrid",
+      "expected_conflicts": [
+        "Allée des Pins|Grenoble|Pins",
+        "Impasse du Moulin|Lyon|Moulin"
+      ],
+      "tags": [
+        "adversarial",
+        "conflict",
+        "time-varying"
+      ],
+      "notes": "Address in Grenoble (2015 bail) vs Lyon (2021 bank statement). Time-varying — both values valid at different times. System should surface both."
+    },
+    {
+      "id": "adversarial-duplicate-invoice",
+      "question": "Combien de factures numéro 2023-0142 du Cabinet Dupont Consulting existent dans les documents ?",
+      "mode": "hybrid",
+      "expected_facts": [
+        "deux|2|duplicata|duplicate"
+      ],
+      "tags": [
+        "adversarial",
+        "duplicate"
+      ],
+      "notes": "Near-identical invoice issued twice (original + duplicata). System should detect/mention both."
+    },
+    {
+      "id": "adversarial-contract-update",
+      "question": "Quel est le tarif journalier du contrat CONT-2022-087 de Jean Pierre Dupont ?",
+      "mode": "hybrid",
+      "expected_conflicts": [
+        "950|950 €",
+        "1100|1 100|1100 €"
+      ],
+      "tags": [
+        "adversarial",
+        "update",
+        "time-varying"
+      ],
+      "notes": "Contract v1 (950€/day) amended by avenant (1100€/day from May 2022). System should surface both or explicitly note the update."
+    },
+    {
+      "id": "adversarial-negative-unknown",
+      "question": "Quels documents concernent Marie Lambert dans cette base de connaissances ?",
+      "mode": "hybrid",
+      "forbidden_facts": [
+        "Marie Lambert est|Marie Lambert a|Marie Lambert vit"
+      ],
+      "tags": [
+        "adversarial",
+        "negative"
+      ],
+      "notes": "Marie Lambert does not exist in any corpus doc. System must not hallucinate. Pass = no forbidden assertions about this person."
     }
   ]
 }
