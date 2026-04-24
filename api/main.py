@@ -1,16 +1,16 @@
 """FastAPI application — my-memory knowledge graph API.
 
-V1 stub: /health, /facts/{fact_id}.
-Phase 10 hardens with auth, CORS, rate limiting, and all remaining
-endpoints from charter §2.2.
+Phase 7: /health, /facts/{id}, /conflicts, /conflicts/{id},
+         POST /conflicts/{id}/resolve (stub).
+Phase 10 hardens with auth, CORS, rate limiting, and remaining endpoints.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi import Path as PathParam
 
 from facts.store import FactStore
@@ -38,14 +38,83 @@ def get_fact(
     fact_id: Annotated[str, PathParam(pattern=_SHA256_PATTERN)],
     store: FactStore = Depends(get_store),
 ) -> dict:
-    """Return a Fact with its Claims and (empty until Phase 7) Conflicts."""
+    """Return a Fact with its Claims and Conflicts."""
     fact = store.get_fact(fact_id)
     if fact is None:
         raise HTTPException(status_code=404, detail="Fact not found")
 
     claims = store.claims_for_fact(fact_id)
+    conflicts = store.conflicts_for_fact(fact_id)
     return {
         "fact": fact.model_dump(),
         "claims": [c.model_dump() for c in claims],
-        "conflicts": [],
+        "conflicts": [c.model_dump() for c in conflicts],
     }
+
+
+@app.get("/conflicts")
+def list_conflicts(
+    status: Optional[str] = Query(default=None, description="Filter by status"),
+    limit: int = Query(default=100, ge=1, le=1000),
+    store: FactStore = Depends(get_store),
+) -> dict:
+    """List conflicts, optionally filtered by status."""
+    all_conflicts = store.all_conflicts()
+    if status is not None:
+        all_conflicts = [c for c in all_conflicts if c.status == status]
+    paged = all_conflicts[:limit]
+    return {
+        "conflicts": [c.model_dump() for c in paged],
+        "total": len(all_conflicts),
+    }
+
+
+@app.get("/conflicts/{conflict_id}")
+def get_conflict(
+    conflict_id: Annotated[str, PathParam(pattern=_SHA256_PATTERN)],
+    store: FactStore = Depends(get_store),
+) -> dict:
+    """Return a Conflict with all competing Facts and their Claims."""
+    conflict = store.get_conflict(conflict_id)
+    if conflict is None:
+        raise HTTPException(status_code=404, detail="Conflict not found")
+
+    valid_facts = [
+        store.get_fact(fid)
+        for fid in conflict.competing_fact_ids
+        if store.get_fact(fid) is not None
+    ]
+    claims = {
+        fid: store.claims_for_fact(fid)
+        for fid in conflict.competing_fact_ids
+    }
+    return {
+        "conflict": conflict.model_dump(),
+        "competing_facts": [f.model_dump() for f in valid_facts],
+        "claims": {fid: [c.model_dump() for c in cs] for fid, cs in claims.items()},
+    }
+
+
+@app.post("/conflicts/{conflict_id}/resolve", status_code=501)
+def resolve_conflict(
+    conflict_id: Annotated[str, PathParam(pattern=_SHA256_PATTERN)],
+    body: dict,
+    store: FactStore = Depends(get_store),
+) -> dict:
+    """Stub — resolution flows through YAML + Git (Phase 7.3).
+
+    Returns 404 if the conflict does not exist; 501 otherwise.
+    Use corrections/derivation/conflicts/<id>.yaml and
+    python -m corrections apply-conflict-corrections --apply.
+    """
+    conflict = store.get_conflict(conflict_id)
+    if conflict is None:
+        raise HTTPException(status_code=404, detail="Conflict not found")
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "API-driven resolution not yet implemented. "
+            "Edit corrections/derivation/conflicts/<id>.yaml and run "
+            "python -m corrections apply-conflict-corrections --apply"
+        ),
+    )
