@@ -1,4 +1,4 @@
-"""Fact/Claim/Conflict/Predicate Pydantic schemas — Phase 6.
+"""Fact/Claim/Conflict/Predicate Pydantic schemas + FactResult — Phase 6.
 
 All IDs are content-addressable (SHA-256) so the same semantic fact
 always produces the same ID regardless of insertion order or host.
@@ -9,6 +9,7 @@ stored fields, guaranteeing consistency.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional, Union
 
@@ -87,6 +88,20 @@ class Conflict(BaseModel):
     @property
     def id(self) -> str:
         return _sha256(self.subject_id, self.predicate)
+
+
+@dataclass
+class FactResult:
+    """In-process result object returned by a pack's fact-emission step.
+
+    Not serialized — passed between orchestrator and store within one run.
+    """
+
+    facts: list[Fact] = field(default_factory=list)
+    claims: list[Claim] = field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        return not self.facts and not self.claims
 
 
 class Predicate(BaseModel):

@@ -15,10 +15,13 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Iterable, Optional
 
+from facts.models import Claim, Fact, FactResult
 from packs.personal_documents.schemas.transaction import Transaction
 
 logger = logging.getLogger(__name__)
 
+
+_PACK_VERSION = "0.2.0"
 
 # ----------------------------- pack taxonomy ----------------------------
 
@@ -63,6 +66,54 @@ def _category_summary_name(doc_id: str, direction: str, category: str) -> str:
     return (
         f"Expense summary {category} ({direction}) from bank statement {doc_id}"
     )
+
+
+# ----------------------------- fact planning ----------------------------
+
+
+def plan_transaction_facts(transactions: Iterable[Transaction]) -> FactResult:
+    """Build Fact + Claim pairs for each transaction row.
+
+    One Fact per transaction (subject = account entity, predicate =
+    'transaction').  One Claim per Fact (source_doc_id, row index,
+    deterministic extractor string).  Confidence = 1.0 — the extractor is
+    regex-based with no probabilistic step.
+    """
+    facts: list[Fact] = []
+    claims: list[Claim] = []
+
+    for i, t in enumerate(transactions):
+        subject_id = _account_node_name(t.account_rib)
+        canonical_value = _tx_node_name(t)
+
+        fact = Fact(
+            subject_id=subject_id,
+            predicate="transaction",
+            canonical_value=canonical_value,
+            value={
+                "date": t.date.isoformat(),
+                "value_date": t.value_date.isoformat(),
+                "direction": t.direction.value,
+                "amount": str(t.amount),
+                "category": t.category or "other",
+                "description": t.description,
+            },
+            source_doc_id=t.source_doc_id,
+            confidence=1.0,
+        )
+
+        claim = Claim(
+            fact_id=fact.id,
+            source_doc_id=t.source_doc_id,
+            source_location=f"row:{i}",
+            extractor=f"pack:bank_statement@{_PACK_VERSION}",
+            confidence=1.0,
+        )
+
+        facts.append(fact)
+        claims.append(claim)
+
+    return FactResult(facts=facts, claims=claims)
 
 
 # ----------------------------- planning ---------------------------------
