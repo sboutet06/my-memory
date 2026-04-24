@@ -94,6 +94,17 @@ def score_fact_coverage(expected_facts: Iterable[str], answer: str) -> float:
     return _substring_coverage(expected_facts, answer)
 
 
+def score_fact_provenance_coverage(
+    expected_provenance: Iterable[str], answer: str,
+) -> float:
+    """Fraction of expected provenance strings present in the answer.
+
+    Same accent+case-insensitive substring matching with `|` OR
+    alternatives as `score_fact_coverage`. Empty expected → 1.0.
+    """
+    return _substring_coverage(expected_provenance, answer)
+
+
 def count_forbidden(forbidden: Iterable[str], answer: str) -> int:
     """Number of forbidden entries present in the answer. Term-level count.
 

@@ -123,6 +123,62 @@
       "expected_documents": ["PasseportSeb", "pc_seb"],
       "expected_entities": ["passeport"],
       "expected_facts": [],
+      "expected_provenance": [],
+      "forbidden_facts": []
+    },
+    {
+      "id": "fact-evidence-bank-tx",
+      "question": "Quel document source contient les virements bancaires de mars 2026 ?",
+      "tags": ["provenance", "fact-level", "bank"],
+      "notes": "Phase 6 fact-provenance case: specific transactions → source document. Transaction nodes in LightRAG carry source_doc_id.",
+      "expected_documents": ["RLV_CHQ"],
+      "expected_entities": [],
+      "expected_facts": [],
+      "expected_provenance": ["virement"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "fact-source-address",
+      "question": "Quel document atteste de l'adresse à Roquefort-les-Pins ?",
+      "tags": ["provenance", "fact-level", "address"],
+      "notes": "Phase 6 fact-provenance case: address fact → source document. Roquefort-les-Pins appears in the 2026 bank statement header.",
+      "expected_documents": ["RLV_CHQ"],
+      "expected_entities": ["Roquefort"],
+      "expected_facts": [],
+      "expected_provenance": ["Roquefort"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "fact-list-by-source",
+      "question": "Quels paiements par carte bancaire sont enregistrés dans mes relevés ?",
+      "tags": ["provenance", "fact-level", "bank"],
+      "notes": "Phase 6 fact-provenance case: list facts from source. Card-payment transaction nodes (type CARTE) should be visible.",
+      "expected_documents": ["RLV_CHQ"],
+      "expected_entities": [],
+      "expected_facts": [],
+      "expected_provenance": ["carte"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "fact-confidence",
+      "question": "Quels virements entrants apparaissent dans le relevé bancaire ?",
+      "tags": ["provenance", "fact-level", "bank"],
+      "notes": "Phase 6 fact-provenance case: incoming transfers. Tests retrievability of credit-direction transaction facts.",
+      "expected_documents": ["RLV_CHQ"],
+      "expected_entities": [],
+      "expected_facts": [],
+      "expected_provenance": ["virement"],
+      "forbidden_facts": []
+    },
+    {
+      "id": "fact-extractor-version",
+      "question": "Quelle est la période couverte par le relevé bancaire présent dans mes documents ?",
+      "tags": ["provenance", "fact-level", "bank"],
+      "notes": "Phase 6 fact-provenance case: source temporal metadata. Statement period annotation should be in graph.",
+      "expected_documents": ["RLV_CHQ"],
+      "expected_entities": [],
+      "expected_facts": [],
+      "expected_provenance": ["2026"],
       "forbidden_facts": []
     }
   ]

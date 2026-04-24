@@ -24,6 +24,7 @@ class EvalCase(BaseModel):
     expected_documents: list[str] = Field(default_factory=list)
     expected_entities: list[str] = Field(default_factory=list)
     expected_facts: list[str] = Field(default_factory=list)
+    expected_provenance: list[str] = Field(default_factory=list)
     forbidden_facts: list[str] = Field(default_factory=list)
     notes: str = ""
     tags: list[str] = Field(default_factory=list)
@@ -47,6 +48,7 @@ class EvalCaseResult(BaseModel):
     doc_coverage: float
     entity_coverage: float
     fact_coverage: float
+    fact_provenance_coverage: float = 1.0
     forbidden_violations: int
     passed: bool  # True iff all coverage==1 and forbidden_violations==0
 

@@ -16,6 +16,7 @@ from evaluation.scorer import (
     score_document_coverage,
     score_entity_coverage,
     score_fact_coverage,
+    score_fact_provenance_coverage,
 )
 from extraction.config import ExtractionConfig
 from extraction.graph import DEFAULT_WORKING_DIR, build_rag
@@ -56,8 +57,9 @@ def score_case(
     doc = score_document_coverage(case.expected_documents, cited_filenames)
     ent = score_entity_coverage(case.expected_entities, answer)
     fac = score_fact_coverage(case.expected_facts, answer)
+    fpc = score_fact_provenance_coverage(case.expected_provenance, answer)
     forbid = count_forbidden(case.forbidden_facts, answer)
-    passed = doc == 1.0 and ent == 1.0 and fac == 1.0 and forbid == 0
+    passed = doc == 1.0 and ent == 1.0 and fac == 1.0 and fpc == 1.0 and forbid == 0
     return EvalCaseResult(
         case_id=case.id,
         question=case.question,
@@ -67,6 +69,7 @@ def score_case(
         doc_coverage=doc,
         entity_coverage=ent,
         fact_coverage=fac,
+        fact_provenance_coverage=fpc,
         forbidden_violations=forbid,
         passed=passed,
     )
