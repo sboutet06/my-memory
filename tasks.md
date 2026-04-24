@@ -409,7 +409,7 @@ script and a shell helper.
 
 ### Tasks
 
-- [ ] **6.1 Fact/Claim/Conflict schema**
+- [x] **6.1 Fact/Claim/Conflict schema**
   - Create `facts/` package at repo root (sibling of `extraction/`,
     `corrections/`, `packs/`).
   - Pydantic models: `Fact`, `Claim`, `Conflict`, `Predicate` (registry
@@ -429,7 +429,7 @@ script and a shell helper.
   - Commits: `feat(facts): add Fact/Claim/Conflict schemas`,
     `feat(facts): JSONL-backed store`, `test(facts): …`.
 
-- [ ] **6.2 Bank statement pack migration to facts**
+- [x] **6.2 Bank statement pack migration to facts**
   - Modify `packs/personal_documents/injector.py` to emit a `FactResult`
     (collection of Facts + Claims) alongside existing LightRAG nodes.
   - Each bank `Transaction` row → 1 `Fact(subject=account_entity,
@@ -443,7 +443,7 @@ script and a shell helper.
   - Commits: `feat(pack): bank_statement emits FactResult`,
     `test(pack): …`.
 
-- [ ] **6.3 Pack hook extension**
+- [x] **6.3 Pack hook extension**
   - Add `inject_facts(rag, facts_store, result) -> FactResult` to the
     `Pack` protocol in `packs/__init__.py`.
   - Core iterates discovered packs, calls the hook, collects facts. Put
@@ -457,7 +457,7 @@ script and a shell helper.
   - Commits: `feat(core): Pack.inject_facts hook`,
     `refactor(facts): orchestrator calls pack hooks`.
 
-- [ ] **6.4 API stub**
+- [x] **6.4 API stub**
   - **ASK USER** before adding `fastapi` and `uvicorn` to
     `pyproject.toml`. Present: license (MIT / BSD-3), maintenance
     status (active), install-size impact, no known CVEs as of 2026-04.
@@ -475,7 +475,7 @@ script and a shell helper.
   - Commits: `feat(api): stub FastAPI app + /facts/{id}`,
     `test(api): …`.
 
-- [ ] **6.5 Fact-level eval cases**
+- [x] **6.5 Fact-level eval cases**
   - Extend `evaluation/cases.json` with 5 cases targeting fact-level
     provenance:
     1. `fact-evidence-bank-tx` — "What evidence supports the
@@ -500,7 +500,7 @@ script and a shell helper.
   - Commits: `test(eval): fact-level provenance cases`,
     `feat(eval): fact_provenance_coverage metric`.
 
-- [ ] **6.6 Multi-model benchmark scaffolding (scaffold only, no full
+- [x] **6.6 Multi-model benchmark scaffolding (scaffold only, no full
     run)**
   - Charter §3.8 requires ≥ 2 viable models per stage before V1 ships.
     This task builds the measurement scaffolding; the actual benchmark
