@@ -117,10 +117,12 @@ async def run_all(
     cases: Iterable[EvalCase],
     store_root: Path,
     working_dir: Path,
+    config: ExtractionConfig | None = None,
 ) -> list[EvalCaseResult]:
-    load_dotenv(Path.cwd() / ".env")
-    config = ExtractionConfig.from_env()
-    config.require_api_key()
+    if config is None:
+        load_dotenv(Path.cwd() / ".env")
+        config = ExtractionConfig.from_env()
+        config.require_api_key()
 
     id_to_filename = build_doc_id_to_filename(store_root)
     if not id_to_filename:
