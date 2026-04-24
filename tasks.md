@@ -35,6 +35,11 @@ execution contract.
 You are the implementer, not a planner. Execute. Commit atomically.
 Move on to the next task.
 
+**Mark tasks done immediately.** When a task is complete and committed,
+flip its checkbox from `[ ]` to `[x]` in this file. Do not batch. Do
+not wait until the end of the phase. The checkbox is the live status
+indicator for both the agent and the human reviewer.
+
 **Never commit without the user's explicit approval** — present files
 or diffs and wait. This overrides any inclination to "finish the task"
 autonomously.
@@ -269,7 +274,7 @@ script and a shell helper.
 
 ### Tasks
 
-- [ ] **0.1 Audit candidate queries against the corpus**
+- [x] **0.1 Audit candidate queries against the corpus**
   - Verify tests + eval pass (§4). If not, stop and report.
   - Draft 3–5 candidate French queries per pillar:
     - *Provenance* — any identity / signature / date query likely to
@@ -295,7 +300,7 @@ script and a shell helper.
     moving to 0.2**. Flag any query whose output contains content
     that might be sensitive.
 
-- [ ] **0.2 Write `docs/demo-legal-fr.md`**
+- [x] **0.2 Write `docs/demo-legal-fr.md`**
   - French, ~5-minute live walkthrough, matching the pitch structure:
     - **0:00–0:30** Elevator + problem statement (distill from
       `docs/pitch-legal-fr.md` §1).
@@ -321,7 +326,7 @@ script and a shell helper.
   - No tech brand names in the body (no Docling, LightRAG, Gemini,
     Neo4j, LangGraph). The lawyer does not care about the stack.
 
-- [ ] **0.3 Rerunnable `scripts/demo.sh`**
+- [x] **0.3 Rerunnable `scripts/demo.sh`**
   - Create `scripts/` if it does not exist.
   - `scripts/demo.sh` sources the venv and runs the 3 finalist
     queries in sequence with a clear separator between each.
@@ -333,7 +338,7 @@ script and a shell helper.
     excerpts embedded in `docs/demo-legal-fr.md` (temp=0 ensures
     byte-identical reruns).
 
-- [ ] **0.4 User review gate + commit**
+- [x] **0.4 User review gate + commit**
   - Before committing anything, show the user:
     - The full `docs/demo-legal-fr.md`.
     - The full `scripts/demo.sh`.
