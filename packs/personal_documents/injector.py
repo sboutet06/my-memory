@@ -99,6 +99,7 @@ def plan_transaction_facts(transactions: Iterable[Transaction]) -> FactResult:
                 "description": t.description,
             },
             source_doc_id=t.source_doc_id,
+            valid_from=t.date,
             confidence=1.0,
         )
 

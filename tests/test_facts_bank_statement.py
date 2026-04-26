@@ -107,3 +107,17 @@ class TestPlanTransactionFacts:
             assert "date" in fact.value
             assert "amount" in fact.value
             assert "direction" in fact.value
+
+    def test_facts_have_valid_from_set_to_transaction_date(
+        self, fact_result: FactResult, transactions,
+    ) -> None:
+        """Phase 8.1: transaction date populates valid_from for as_of queries."""
+        for fact, txn in zip(fact_result.facts, transactions):
+            assert fact.valid_from == txn.date
+
+    def test_facts_valid_to_unset_for_transactions(
+        self, fact_result: FactResult,
+    ) -> None:
+        """Transactions are point-in-time events — valid_to stays None."""
+        for fact in fact_result.facts:
+            assert fact.valid_to is None
