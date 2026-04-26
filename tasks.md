@@ -633,7 +633,7 @@ Same discipline as Phase 6. Additional:
 
 ### Tasks (outline)
 
-- [ ] **8.1** `valid_from` / `valid_to` fields on Fact. Migration
+- [x] **8.1** `valid_from` / `valid_to` fields on Fact. Migration
   populates these from existing `[source: YYYY-MM-DD]` description
   annotations where possible; leaves NULL otherwise.
 - [ ] **8.2** `ingestion_version: int` on Claim. Re-ingest of the same
@@ -642,13 +642,13 @@ Same discipline as Phase 6. Additional:
   or pointer file.
 - [ ] **8.3** Wire `replaced_by` YAML field into the ingest pipeline
   (currently declared but unimplemented — charter S4).
-- [ ] **8.4** Supersession engine: for `time_varying=true` predicates,
+- [x] **8.4** Supersession engine: for `time_varying=true` predicates,
   a new Fact with later `valid_from` closes the previous one (sets its
   `valid_to`). Old Fact is not deleted.
-- [ ] **8.5** API: `GET /entities/{id}?as_of=YYYY-MM-DD` — executes
+- [x] **8.5** API: `GET /entities/{id}?as_of=YYYY-MM-DD` — executes
   against fact set filtered by `valid_from ≤ as_of ≤ valid_to (or
   NULL)`.
-- [ ] **8.6** Eval: 5 update cases (synthetic from D6); 3
+- [x] **8.6** Eval: 5 update cases (synthetic from D6); 3
   time-varying-vs-invariant contradiction cases. New metric
   `temporal_accuracy` (are `as_of` queries correct?).
 

@@ -105,6 +105,19 @@ def score_fact_provenance_coverage(
     return _substring_coverage(expected_provenance, answer)
 
 
+def score_temporal_accuracy(
+    expected_temporal: Iterable[str], answer: str,
+) -> float:
+    """Fraction of expected temporal facts present in the answer.
+
+    Used for as_of and supersession-aware queries — the answer should
+    reference values valid at the date in question (or surface the
+    relevant timeline). Same accent+case-insensitive substring matching
+    with `|` OR alternatives. Empty expected → 1.0.
+    """
+    return _substring_coverage(expected_temporal, answer)
+
+
 def score_conflict_detection_coverage(
     expected_conflicts: Iterable[str], answer: str,
 ) -> float:

@@ -18,6 +18,7 @@ from evaluation.scorer import (
     score_entity_coverage,
     score_fact_coverage,
     score_fact_provenance_coverage,
+    score_temporal_accuracy,
 )
 from extraction.config import ExtractionConfig
 from extraction.graph import DEFAULT_WORKING_DIR, build_rag
@@ -60,10 +61,11 @@ def score_case(
     fac = score_fact_coverage(case.expected_facts, answer)
     fpc = score_fact_provenance_coverage(case.expected_provenance, answer)
     cdc = score_conflict_detection_coverage(case.expected_conflicts, answer)
+    ta = score_temporal_accuracy(case.expected_temporal, answer)
     forbid = count_forbidden(case.forbidden_facts, answer)
     passed = (
         doc == 1.0 and ent == 1.0 and fac == 1.0 and fpc == 1.0
-        and cdc == 1.0 and forbid == 0
+        and cdc == 1.0 and ta == 1.0 and forbid == 0
     )
     return EvalCaseResult(
         case_id=case.id,
@@ -76,6 +78,7 @@ def score_case(
         fact_coverage=fac,
         fact_provenance_coverage=fpc,
         conflict_detection_coverage=cdc,
+        temporal_accuracy=ta,
         forbidden_violations=forbid,
         passed=passed,
     )

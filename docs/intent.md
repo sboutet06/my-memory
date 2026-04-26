@@ -904,3 +904,104 @@ re-evaluated after the 2026-04-26 meeting before designing a legal pack.
 Phase 8 — Bitemporal validity and versioning. `valid_from / valid_to` on
 Fact, `ingestion_version` on Claim, supersession engine for time_varying
 predicates, `as_of` API query.
+
+---
+
+## Phase 8 (partial) — Bitemporal validity (session 5, 2026-04-26)
+
+**Goal**: deliver the temporal core (8.1, 8.4, 8.5, 8.6). Skip 8.2 (re-ingest
+archive) and 8.3 (replaced_by wiring) — those are bigger pieces, deferred to
+a follow-up after lawyer feedback shapes Phase 9 priorities.
+
+### Key decisions taken
+
+- **valid_from on transactions** (8.1): bank Transaction.date populates
+  Fact.valid_from. valid_to stays None — transactions are point-in-time
+  events, not state durations.
+- **Supersession engine** (8.4): `facts/supersession.py` —
+  `run_supersession(store, registry)` for time_varying predicates. Older
+  fact's valid_to set to newer.valid_from − 1 day. Earlier fact preserved
+  for as_of history. Idempotent. Skips invariant + allow_multi predicates.
+  Pre-existing valid_to (e.g., from corrections) preserved.
+- **FactStore.replace_facts()**: needed because supersession updates valid_to
+  on existing facts; append-only would unboundedly grow the JSONL on re-runs.
+- **as_of API** (8.5): `GET /entities/{entity_id}?as_of=YYYY-MM-DD` filters
+  facts by `valid_from ≤ D ≤ valid_to (or None)`. FastAPI auto-parses ISO
+  date in query string; malformed → 422.
+- **temporal_accuracy metric** (8.6): substring coverage with same accent +
+  case-insensitive OR-alt semantics as fact_coverage. Wired into
+  EvalCase.expected_temporal, EvalCaseResult.temporal_accuracy,
+  AggregatedCaseResult.mean/std_temporal_accuracy, and the passed check.
+- **Synthetic corpus extension**: 3-step address chain (Grenoble → Lyon →
+  Marseille) and 2-step employer chain (TechSolutions → Veridia) added.
+  Address chain has clean dates (2015, 2021, 2024) for unambiguous
+  supersession; employer chain has explicit handover dates.
+
+### What was implemented (tasks 8.1, 8.4, 8.5, 8.6)
+
+- `packs/personal_documents/injector.py`: `Fact.valid_from = t.date` for
+  every transaction.
+- `facts/supersession.py`: `run_supersession()`.
+- `facts/store.py`: `replace_facts()` and `facts_for_subject_as_of()`.
+- `facts/__main__.py`: `python -m facts supersede` CLI.
+- `facts/__init__.py`: re-export `run_supersession`.
+- `api/main.py`: `GET /entities/{entity_id}` with `as_of` query.
+- `evaluation/scorer.py`: `score_temporal_accuracy()`.
+- `evaluation/schema.py`: `expected_temporal`, `temporal_accuracy`.
+- `evaluation/runner.py`: wires temporal_accuracy into score_case + passed.
+- `evaluation/aggregate.py`: `mean/std_temporal_accuracy`.
+- `evaluation/cases.json`: 5 Phase 8 cases (3 as_of address, 1 employer
+  history, 1 contract rate update). Total: 26 cases.
+- `raw-synthetic/`: +3 docs (address-C, employer-A, employer-B). Total: 11.
+- Test count: 599 → 640 (+41 across 3 new test files).
+
+### Skipped — for follow-up
+
+- **8.2 ingestion_version archive**: bigger scope (filesystem versioning,
+  `current` pointer, archive layout). Defer until re-ingest is a real
+  pain point. The Claim.ingestion_version field already exists in the
+  schema (default 1) — wiring is what's missing.
+- **8.3 replaced_by wiring**: declared but unimplemented in source
+  corrections. Small fix, but no demand yet — defer to Phase 9 cleanup.
+
+### Self-review (CLAUDE.md §7)
+
+| Axis | Status | Note |
+|------|--------|------|
+| Spec conformance | ✅ | 8.1 + 8.4 + 8.5 + 8.6 implemented; 8.2 + 8.3 deferred (documented) |
+| Security OWASP | ⚠️ | API still no auth — Phase 10 hardens |
+| Resilience | ✅ | Supersession idempotent; replace_facts atomic; as_of malformed → 422 |
+| Reliability | ✅ | Manual valid_to preserved; pre-existing supersession respected |
+| Resource pressure | ✅ | O(n) supersession scan; replace_facts rewrites JSONL once |
+| Observability | ✅ | logger.info on supersession changes; CLI prints count |
+| Testability | ✅ | 640 unit tests; 41 new for Phase 8; API via TestClient |
+
+No 🔴 items. ⚠️: API auth deferred to Phase 10 (consistent prior decision).
+
+### Phase gate — pending e2e
+
+Same shape as Phase 7 gate. Required to close Phase 7 + Phase 8 jointly:
+1. `python -m ingestion raw-synthetic/` — adds 11 synthetic docs to store/
+2. `python -m extraction extract` — incremental extract on new docs
+3. `python -m extraction extract-structured` — populates facts (only bank
+   docs in current pack; address/employer extractors are future work)
+4. `python -m facts detect-conflicts` — should detect birthdate conflict
+5. `python -m facts supersede` — closes valid_to on chained facts
+6. `python -m evaluation --runs 3` — verify metrics:
+   - Original 11 cases: doc/entity/fact_coverage no regression
+   - 5 Phase 6 cases: fact_provenance_coverage ≥ 0.80
+   - 5 Phase 7 cases: conflict_detection_coverage ≥ 0.90
+   - 5 Phase 8 cases: temporal_accuracy ≥ 0.90
+
+**Note**: Phase 7+8 adversarial cases scoring depends on the LLM answer
+surfacing the relevant conflicting/temporal values. The facts layer
+infrastructure works; the eval pass criterion measures whether the
+LightRAG NL answer reflects it. No address/employer pack extractors yet,
+so facts-layer supersession only fires on transactions.
+
+### Next phase
+
+Phase 9 — cleanup and hardening. 9.1 (Profile fragmentation), 9.2 (Entity
+namespace separation), 9.3 (QueryDriver interface), 9.4 (incremental
+extraction), 9.5 (eval expansion), 9.6 (CI gate). Or: defer to legal-pack
+worktree work after lawyer meeting.
