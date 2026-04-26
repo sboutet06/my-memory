@@ -8,6 +8,7 @@ from facts.detector import detect_all_conflicts, detect_conflict_for_fact
 from facts.models import Claim, Conflict, Fact, FactResult, Predicate
 from facts.predicates import PredicateRegistry
 from facts.store import DuplicateIDError, FactStore
+from facts.supersession import run_supersession
 
 __all__ = [
     "Claim",
@@ -20,4 +21,5 @@ __all__ = [
     "PredicateRegistry",
     "detect_all_conflicts",
     "detect_conflict_for_fact",
+    "run_supersession",
 ]

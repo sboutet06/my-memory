@@ -86,6 +86,18 @@ class FactStore:
     def get_fact(self, fact_id: str) -> Fact | None:
         return self._facts.get(fact_id)
 
+    def replace_facts(self, facts: list[Fact]) -> None:
+        """Overwrite the facts store wholesale.
+
+        Used by the supersession engine to update valid_to on existing
+        facts (Phase 8.4). Append-only doesn't suffice — re-running
+        would unboundedly grow the JSONL.
+        """
+        self._facts = {f.id: f for f in facts}
+        with self._facts_path.open("w", encoding="utf-8") as fh:
+            for f in facts:
+                fh.write(f.model_dump_json() + "\n")
+
     def facts_for_subject(self, subject_id: str) -> list[Fact]:
         return [f for f in self._facts.values() if f.subject_id == subject_id]
 
