@@ -12,22 +12,22 @@ No real personal data.
 
 | File | Type | Purpose |
 |---|---|---|
-| `contradiction-birthdate-dupont-A.txt` | Casier judiciaire (fictif) | Asserts birthdate **1980-01-15** |
-| `contradiction-birthdate-dupont-B.txt` | Attestation SS (fictive) | Asserts birthdate **1982-03-22** → time-invariant conflict |
-| `duplicate-invoice-A.txt` | Facture (fictive) | Invoice 2023-0142 original |
-| `duplicate-invoice-B.txt` | Facture (fictive) | Invoice 2023-0142 duplicata — near-identical content |
-| `update-contract-v1.txt` | Contrat (fictif) | Contract CONT-2022-087, rate 950€/day |
-| `update-contract-v2.txt` | Avenant (fictif) | Amendment: rate updated to 1100€/day — update pair |
+| `contradiction-birthdate-dupont-A.md` | Casier judiciaire (fictif) | Asserts birthdate **1980-01-15** |
+| `contradiction-birthdate-dupont-B.md` | Attestation SS (fictive) | Asserts birthdate **1982-03-22** → time-invariant conflict |
+| `duplicate-invoice-A.md` | Facture (fictive) | Invoice 2023-0142 original |
+| `duplicate-invoice-B.md` | Facture (fictive) | Invoice 2023-0142 duplicata — near-identical content |
+| `update-contract-v1.md` | Contrat (fictif) | Contract CONT-2022-087, rate 950€/day |
+| `update-contract-v2.md` | Avenant (fictif) | Amendment: rate updated to 1100€/day — update pair |
 
 ### Phase 8 — temporal supersession (3-step address chain + 2-step employer chain)
 
 | File | Date asserted | Value |
 |---|---|---|
-| `contradiction-address-dupont-A.txt` | bail 2015 | **15 Allée des Pins, Grenoble** (valid 2015–2018) |
-| `contradiction-address-dupont-B.txt` | relevé bancaire 2021 | **8 Impasse du Moulin, Lyon** (valid 2021→2023) |
-| `contradiction-address-dupont-C.txt` | assurance 2024 | **102 Avenue de la République, Marseille** (valid 2024→) |
-| `temporal-employer-dupont-A.txt` | CDI 2018 | **SARL TechSolutions Lyon** (valid 2018-04-01 → 2022-10-31) |
-| `temporal-employer-dupont-B.txt` | CDI 2022 | **SAS Cabinet Veridia Conseil** (valid 2022-11-01 →) |
+| `contradiction-address-dupont-A.md` | bail 2015 | **15 Allée des Pins, Grenoble** (valid 2015–2018) |
+| `contradiction-address-dupont-B.md` | relevé bancaire 2021 | **8 Impasse du Moulin, Lyon** (valid 2021→2023) |
+| `contradiction-address-dupont-C.md` | assurance 2024 | **102 Avenue de la République, Marseille** (valid 2024→) |
+| `temporal-employer-dupont-A.md` | CDI 2018 | **SARL TechSolutions Lyon** (valid 2018-04-01 → 2022-10-31) |
+| `temporal-employer-dupont-B.md` | CDI 2022 | **SAS Cabinet Veridia Conseil** (valid 2022-11-01 →) |
 
 The address chain has 3 steps to test multi-step supersession.
 The employer chain has explicit dates including a clean handover.

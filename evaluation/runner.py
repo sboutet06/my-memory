@@ -182,5 +182,14 @@ def summarize(results: list[EvalCaseResult]) -> dict:
         "mean_doc_coverage": sum(r.doc_coverage for r in results) / n,
         "mean_entity_coverage": sum(r.entity_coverage for r in results) / n,
         "mean_fact_coverage": sum(r.fact_coverage for r in results) / n,
+        "mean_fact_provenance_coverage": (
+            sum(r.fact_provenance_coverage for r in results) / n
+        ),
+        "mean_conflict_detection_coverage": (
+            sum(r.conflict_detection_coverage for r in results) / n
+        ),
+        "mean_temporal_accuracy": (
+            sum(r.temporal_accuracy for r in results) / n
+        ),
         "total_forbidden_violations": sum(r.forbidden_violations for r in results),
     }

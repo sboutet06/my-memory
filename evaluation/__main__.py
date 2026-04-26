@@ -17,10 +17,13 @@ from extraction.graph import DEFAULT_WORKING_DIR
 def _fmt_case(result) -> str:
     mark = "✓" if result.passed else "✗"
     return (
-        f"  [{mark}] {result.case_id:<25} "
+        f"  [{mark}] {result.case_id:<35} "
         f"doc={result.doc_coverage:.2f} "
         f"ent={result.entity_coverage:.2f} "
         f"fact={result.fact_coverage:.2f} "
+        f"prov={result.fact_provenance_coverage:.2f} "
+        f"conf={result.conflict_detection_coverage:.2f} "
+        f"temp={result.temporal_accuracy:.2f} "
         f"forbid={result.forbidden_violations}"
     )
 
@@ -148,10 +151,13 @@ def main(argv: list[str] | None = None) -> int:
             for r in results:
                 print(_fmt_case(r))
             print()
-            print(f"  mean doc_coverage   : {summary['mean_doc_coverage']:.2f}")
-            print(f"  mean entity_coverage: {summary['mean_entity_coverage']:.2f}")
-            print(f"  mean fact_coverage  : {summary['mean_fact_coverage']:.2f}")
-            print(f"  forbidden violations: {summary['total_forbidden_violations']}")
+            print(f"  mean doc_coverage              : {summary['mean_doc_coverage']:.2f}")
+            print(f"  mean entity_coverage           : {summary['mean_entity_coverage']:.2f}")
+            print(f"  mean fact_coverage             : {summary['mean_fact_coverage']:.2f}")
+            print(f"  mean fact_provenance_coverage  : {summary['mean_fact_provenance_coverage']:.2f}")
+            print(f"  mean conflict_detection_coverage: {summary['mean_conflict_detection_coverage']:.2f}")
+            print(f"  mean temporal_accuracy         : {summary['mean_temporal_accuracy']:.2f}")
+            print(f"  forbidden violations           : {summary['total_forbidden_violations']}")
         return 0 if summary["failed"] == 0 else 1
 
     runs = asyncio.run(run_all_multi(cases, args.store, args.working_dir, args.runs))
