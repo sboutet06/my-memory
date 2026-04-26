@@ -2,11 +2,13 @@
 
 Phase 7: /health, /facts/{id}, /conflicts, /conflicts/{id},
          POST /conflicts/{id}/resolve (stub).
+Phase 8: GET /entities/{id} with optional ?as_of=YYYY-MM-DD.
 Phase 10 hardens with auth, CORS, rate limiting, and remaining endpoints.
 """
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -93,6 +95,32 @@ def get_conflict(
         "competing_facts": [f.model_dump() for f in valid_facts],
         "claims": {fid: [c.model_dump() for c in cs] for fid, cs in claims.items()},
     }
+
+
+@app.get("/entities/{entity_id}")
+def get_entity(
+    entity_id: str,
+    as_of: Optional[date] = Query(default=None, description="ISO date YYYY-MM-DD"),
+    store: FactStore = Depends(get_store),
+) -> dict:
+    """Return facts about entity_id, optionally filtered to a point in time.
+
+    Phase 8.5 — bitemporal as_of query. A fact is in scope at date D iff
+    (valid_from is None or valid_from <= D) and (valid_to is None or
+    valid_to >= D).
+    """
+    if as_of is None:
+        facts = store.facts_for_subject(entity_id)
+    else:
+        facts = store.facts_for_subject_as_of(entity_id, as_of)
+
+    payload: dict = {
+        "entity_id": entity_id,
+        "facts": [f.model_dump() for f in facts],
+    }
+    if as_of is not None:
+        payload["as_of"] = as_of.isoformat()
+    return payload
 
 
 @app.post("/conflicts/{conflict_id}/resolve", status_code=501)

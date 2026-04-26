@@ -101,6 +101,26 @@ class FactStore:
     def facts_for_subject(self, subject_id: str) -> list[Fact]:
         return [f for f in self._facts.values() if f.subject_id == subject_id]
 
+    def facts_for_subject_as_of(
+        self, subject_id: str, as_of,
+    ) -> list[Fact]:
+        """Return facts about subject_id valid at the given date.
+
+        A fact is in scope iff:
+          (valid_from is None or valid_from <= as_of)
+          and (valid_to is None or valid_to >= as_of).
+        """
+        out: list[Fact] = []
+        for f in self._facts.values():
+            if f.subject_id != subject_id:
+                continue
+            if f.valid_from is not None and f.valid_from > as_of:
+                continue
+            if f.valid_to is not None and f.valid_to < as_of:
+                continue
+            out.append(f)
+        return out
+
     def all_facts(self) -> Iterator[Fact]:
         return iter(self._facts.values())
 
