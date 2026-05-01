@@ -41,3 +41,7 @@ extraction_store.bak/
 corrections/source/
 corrections/derivation/
 facts/store/
+
+# Benchmark run outputs contain LLM answers over the personal corpus —
+# real PII (SSN, fiscal IDs, addresses, etc.). Never commit.
+benchmarks/runs/
