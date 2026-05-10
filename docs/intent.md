@@ -1163,3 +1163,93 @@ public corpora. Final selection:
 
 Phase 8b. First action: pick OCR corpus list with user approval, then
 8b.1 (8.2 + 8.3 close).
+
+### Implementation that landed in the same 2026-05-10 session
+
+User went AFK with "le plus autonome possible". Subsequent commits on
+master, all atomic, all behind `pytest -m "not integration"` green:
+
+- `chore(gitignore)` — allow raw-ocr/, raw-medical/.
+- `chore(corpus)` — raw-ocr/ (6 PDFs from archives.assemblee-nationale.fr,
+  Licence Ouverte 2.0; 4 hybrid + 2 image-only rasterized), raw-medical/
+  (25 .md sampled from HF mlabonne/medical-cases-fr stratified across 15
+  specialties, random_state=42), README.txt convention to keep Docling
+  from ingesting them.
+- `docs:` premortem section + Phase 8b plan.
+- Smoke test ingestion: `python -m ingestion raw-medical/` (25 docs,
+  classified `healthcare`, all rich), `python -m ingestion raw-ocr/`
+  (6 PDFs, ocrmac on image-only triggered cleanly, all rich; tables
+  extracted, FR accents preserved). Total store/ went 43 → 74 dirs.
+- **Phase 8b.1 (8.2 + 8.3) — DONE**:
+  - `feat(storage)`: archive primitives — `find_existing_at_path`,
+    `archive_current_version`, `read_current_version`, `current` pointer
+    file. `persist_document(is_update=True)` flow.
+  - `feat(ingestion)`: re-ingest archives prior version. Resolved-path
+    identity, `IngestionStatus.UPDATED`, archive-then-persist sequence
+    so a write failure leaves recoverable state.
+  - `feat(facts)`: `replaced_by` wiring — `facts/replacement.py` walks
+    source corrections, pairs old/new facts by (subject_id, predicate),
+    sets `valid_to` on time_varying olds, marks Conflicts
+    `resolved_temporally` with `winner_fact_id` audit trail. CLI
+    `python -m facts apply-replacements`. Idempotent.
+  - +33 tests across 2 new files. Charter S4 (updates as additions, not
+    overwrites) operational.
+- **Phase 8b.2 — DONE**:
+  - `feat(facts)`: `ConfidenceLevel` StrEnum
+    (`deterministic | llm_high | llm_low`) replaces float on Fact and
+    Claim. Float dropped because un-calibrated float = theatre
+    (premortem D9). Bank pack emits DETERMINISTIC.
+  - On-disk migration script `scripts/migrate_confidence.py` (dry-run
+    by default). 17 facts + 17 claims migrated 1.0 → "deterministic"
+    in place; ids unchanged (confidence not in either id hash).
+- **Phase 8b.6 — DONE**:
+  - `feat(eval)`: abstention path. Schema gains
+    `expects_abstention: bool` and `abstention_accuracy: float`.
+    Scorer marker set covers FR ("ne contient pas suffisamment",
+    "n'apparaît pas", "insuffisant", …) and EN ("insufficient
+    evidence", "no information", "cannot determine", …) — accent +
+    case insensitive. Aggregate / runner / summary all carry the new
+    metric.
+  - Prompt update in `extraction/config.py`: temporal_user_prompt
+    extended with explicit authorization to respond "Le corpus ne
+    contient pas suffisamment d'informations" instead of inventing
+    facts.
+  - 3 cases added to `evaluation/cases.json`
+    (`abstention-no-medical-history`, `abstention-out-of-temporal-range`,
+    `abstention-irrelevant-predicate`) — total 26 → 29.
+  - Pass criterion: `abstention_accuracy ≥ 0.75` in v0.5,
+    `≥ 0.90` in V1.
+
+### Test count progression this session
+
+640 baseline → 658 (8b.1 storage) → 666 (8b.1 replacement) → 667 (8b.2
+categorical) → 675 (8b.6 abstention). All green throughout.
+
+### Phase 8b status (end of 2026-05-10)
+
+| Sub-task | Status |
+|---|---|
+| 8b.1 close 8.2 + 8.3 | ✅ done |
+| 8b.2 categorical confidence | ✅ done |
+| 8b.3 extract caching | ⏳ pending — design discussion needed (LightRAG cache vs our overlay; what specifically buster on prompt edits) |
+| 8b.4 local LLM swap | ⏳ pending — needs user OK for Ollama/MLX dep + license check |
+| 8b.5 non-bank Fact extractors | ⏳ pending — needs prompt design + LLM-tests pattern |
+| 8b.5b medical predicate scaffold | ⏳ pending — depends on 8b.5 |
+| 8b.6 abstention | ✅ done |
+| 8b.7 phase gate v0.5 script | ⏳ pending — depends on 8b.3 + 8b.5 |
+
+### Known follow-ups owed back to user
+
+- 8b.3 cache scope decision: invalidation key strategy (doc_hash, model_id,
+  extractor_version, prompt_hash) — confirm what counts as a "prompt edit"
+  worth busting on.
+- 8b.4 dep approval: Ollama vs MLX, license/install size/CVE. Default
+  proposal: Ollama (MIT) + qwen2.5:7b-instruct.
+- 8b.5 prompt design for address/birthdate/employer extractors —
+  charter §3.2 maps confidence categorical buckets to post-validation
+  passes/fails; need user sign-off on the regex set.
+- E2E phase gate run against the 29-case suite after 8b.5 so we can
+  finally see live `abstention_accuracy`, `temporal_accuracy`,
+  `conflict_detection_coverage` figures (currently theory only on
+  synthetic data without non-bank Fact extractors).
+
