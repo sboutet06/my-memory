@@ -15,7 +15,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Iterable, Optional
 
-from facts.models import Claim, Fact, FactResult
+from facts.models import Claim, ConfidenceLevel, Fact, FactResult
 from packs.personal_documents.schemas.transaction import Transaction
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ def plan_transaction_facts(transactions: Iterable[Transaction]) -> FactResult:
             },
             source_doc_id=t.source_doc_id,
             valid_from=t.date,
-            confidence=1.0,
+            confidence=ConfidenceLevel.DETERMINISTIC,
         )
 
         claim = Claim(
@@ -108,7 +108,7 @@ def plan_transaction_facts(transactions: Iterable[Transaction]) -> FactResult:
             source_doc_id=t.source_doc_id,
             source_location=f"row:{i}",
             extractor=f"pack:bank_statement@{_PACK_VERSION}",
-            confidence=1.0,
+            confidence=ConfidenceLevel.DETERMINISTIC,
         )
 
         facts.append(fact)

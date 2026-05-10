@@ -11,9 +11,32 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from enum import StrEnum
 from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, computed_field
+
+
+class ConfidenceLevel(StrEnum):
+    """Categorical confidence — Phase 8b.2 (charter §3.2 + premortem D9).
+
+    Float was dropped because un-calibrated float (no held-out
+    calibration set) is theatre and contradicts the §1.2 accountability
+    promise. The three buckets are honest by construction:
+
+    - DETERMINISTIC: regex / structured extractor (bank, IBAN parser,
+      explicit YAML override). No LLM in the path.
+    - LLM_HIGH: LLM extraction + deterministic post-validation passed
+      (typed predicate, value matches declared regex/format).
+    - LLM_LOW: LLM extraction without post-validation OR validation
+      failed but extractor wanted to surface the value anyway.
+
+    Reviving a numeric float requires a calibration set first.
+    """
+
+    DETERMINISTIC = "deterministic"
+    LLM_HIGH = "llm_high"
+    LLM_LOW = "llm_low"
 
 
 def _sha256(*parts: str) -> str:
@@ -41,7 +64,7 @@ class Fact(BaseModel):
     valid_from: Optional[date] = None
     valid_to: Optional[date] = None
     claim_ids: list[str] = Field(default_factory=list)
-    confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    confidence: ConfidenceLevel = ConfidenceLevel.DETERMINISTIC
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -62,7 +85,7 @@ class Claim(BaseModel):
     extracted_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
-    confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    confidence: ConfidenceLevel = ConfidenceLevel.DETERMINISTIC
     ingestion_version: int = Field(default=1, ge=1)
 
     @computed_field  # type: ignore[prop-decorator]

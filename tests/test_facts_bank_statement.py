@@ -69,11 +69,13 @@ class TestPlanTransactionFacts:
     def test_claims_source_doc_matches(self, fact_result: FactResult) -> None:
         assert all(c.source_doc_id == "doc-stmt-1" for c in fact_result.claims)
 
-    def test_claims_confidence_is_1(self, fact_result: FactResult) -> None:
-        assert all(c.confidence == 1.0 for c in fact_result.claims)
+    def test_claims_confidence_is_deterministic(self, fact_result: FactResult) -> None:
+        from facts.models import ConfidenceLevel
+        assert all(c.confidence == ConfidenceLevel.DETERMINISTIC for c in fact_result.claims)
 
-    def test_facts_confidence_is_1(self, fact_result: FactResult) -> None:
-        assert all(f.confidence == 1.0 for f in fact_result.facts)
+    def test_facts_confidence_is_deterministic(self, fact_result: FactResult) -> None:
+        from facts.models import ConfidenceLevel
+        assert all(f.confidence == ConfidenceLevel.DETERMINISTIC for f in fact_result.facts)
 
     def test_claims_extractor_identifies_bank_statement(self, fact_result: FactResult) -> None:
         assert all("bank_statement" in c.extractor for c in fact_result.claims)

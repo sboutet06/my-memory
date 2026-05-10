@@ -10,7 +10,7 @@ from datetime import date
 
 import pytest
 
-from facts.models import Claim, Conflict, Fact, Predicate, _sha256
+from facts.models import Claim, ConfidenceLevel, Conflict, Fact, Predicate, _sha256
 
 
 class TestSha256Helper:
@@ -42,8 +42,8 @@ class TestFactId:
         assert f.id == expected
 
     def test_id_stable_when_non_key_fields_differ(self) -> None:
-        f1 = self._make(confidence=0.8)
-        f2 = self._make(confidence=1.0)
+        f1 = self._make(confidence=ConfidenceLevel.LLM_LOW)
+        f2 = self._make(confidence=ConfidenceLevel.DETERMINISTIC)
         assert f1.id == f2.id
 
     def test_id_stable_when_valid_from_differs(self) -> None:
@@ -73,23 +73,39 @@ class TestFactId:
 
 
 class TestFactValidation:
-    def test_confidence_above_1_rejected(self) -> None:
+    def test_confidence_invalid_string_rejected(self) -> None:
+        """Phase 8b.2: confidence is a categorical enum, not a float."""
         with pytest.raises(Exception):
             Fact(
                 subject_id="e", predicate="p", canonical_value="v",
-                source_doc_id="d", confidence=1.5,
+                source_doc_id="d", confidence="medium",  # type: ignore[arg-type]
             )
 
-    def test_confidence_negative_rejected(self) -> None:
+    def test_confidence_float_rejected(self) -> None:
+        """Floats are no longer accepted (premortem D9)."""
         with pytest.raises(Exception):
             Fact(
                 subject_id="e", predicate="p", canonical_value="v",
-                source_doc_id="d", confidence=-0.1,
+                source_doc_id="d", confidence=0.85,  # type: ignore[arg-type]
             )
 
-    def test_confidence_boundary_values_accepted(self) -> None:
-        Fact(subject_id="e", predicate="p", canonical_value="v", source_doc_id="d", confidence=0.0)
-        Fact(subject_id="e", predicate="p", canonical_value="v", source_doc_id="d", confidence=1.0)
+    def test_confidence_enum_values_accepted(self) -> None:
+        for lvl in (
+            ConfidenceLevel.DETERMINISTIC,
+            ConfidenceLevel.LLM_HIGH,
+            ConfidenceLevel.LLM_LOW,
+        ):
+            Fact(
+                subject_id="e", predicate="p", canonical_value="v",
+                source_doc_id="d", confidence=lvl,
+            )
+
+    def test_confidence_default_is_deterministic(self) -> None:
+        """Default level matches the conservative pre-Phase-8b.2 floor."""
+        f = Fact(
+            subject_id="e", predicate="p", canonical_value="v", source_doc_id="d",
+        )
+        assert f.confidence == ConfidenceLevel.DETERMINISTIC
 
     def test_missing_subject_id_rejected(self) -> None:
         with pytest.raises(Exception):
@@ -103,7 +119,7 @@ class TestFactValidation:
             value={"street": "Rue de Rivoli", "city": "Paris"},
             source_doc_id="doc-xyz",
             valid_from=date(2020, 1, 1),
-            confidence=0.95,
+            confidence=ConfidenceLevel.LLM_HIGH,
         )
         restored = Fact.model_validate_json(f.model_dump_json())
         assert restored.id == f.id
@@ -143,8 +159,8 @@ class TestClaimId:
         assert c.id == expected
 
     def test_id_stable_when_confidence_differs(self) -> None:
-        c1 = self._make(confidence=0.8)
-        c2 = self._make(confidence=1.0)
+        c1 = self._make(confidence=ConfidenceLevel.LLM_LOW)
+        c2 = self._make(confidence=ConfidenceLevel.DETERMINISTIC)
         assert c1.id == c2.id
 
     def test_id_changes_with_different_extractor(self) -> None:
