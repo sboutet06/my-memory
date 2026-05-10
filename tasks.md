@@ -694,7 +694,7 @@ Same discipline as Phase 6. Additional:
 - `as_of` queries work end-to-end. ✅
 - `temporal_accuracy ≥ 0.90` on update cases. ⚠️ unverified (E2E gate
   pending, see Phase 8b.7).
-- Re-ingesting any document does not erase history. ❌ — pending 8b.1.
+- Re-ingesting any document does not erase history. ✅ (closed 8b.1).
 
 ---
 
@@ -727,7 +727,7 @@ Without 8b, v0.5 cannot be claimed.
 
 ### Tasks
 
-- [ ] **8b.1 Close Phase 8 deferred items**
+- [x] **8b.1 Close Phase 8 deferred items** (done 2026-05-10)
   - **8.2 ingestion_version archive**: re-ingest of same `doc_id` with a
     different content hash creates `store/<doc_id>/versions/<v>/`,
     advances a `current` pointer file (text file, not symlink — git
