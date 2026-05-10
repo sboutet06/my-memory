@@ -36,6 +36,14 @@ def make_llm_func(config: ExtractionConfig):
         # with different seeds otherwise). Override via config.temperature
         # or EXTRACTION_TEMPERATURE env var for sampling experiments.
         kwargs.setdefault("temperature", config.temperature)
+        # Phase 8b.4: OpenRouter accepts `provider.order=[...]` to pin
+        # which upstream serves the request. Used by the Mistral / EU
+        # routing path for sovereign-aligned extraction. The openai
+        # client forwards extra_body verbatim into the JSON request body.
+        if config.provider_order:
+            extra_body = dict(kwargs.get("extra_body") or {})
+            extra_body.setdefault("provider", {"order": list(config.provider_order)})
+            kwargs["extra_body"] = extra_body
         return await openai_complete_if_cache(
             config.llm_model,
             prompt,

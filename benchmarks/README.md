@@ -51,6 +51,43 @@ All accessed via OpenRouter. Approval required before running any paid sweep.
 | Qwen-2.5 72B | `qwen/qwen-2.5-72b-instruct` | Strong multilingual open-weight |
 | DeepSeek V3 | `deepseek/deepseek-chat` | High reasoning, budget-friendly |
 
+### Sovereign providers (Phase 8b.4, charter §3.8 r7)
+
+OpenRouter routes a single model id to multiple upstreams; for the
+RGPD-aligned FR legal/medical pilot we pin the upstream via
+`provider.order=[…]` in the request body. Set
+`EXTRACTION_PROVIDER_ORDER=mistral` (with
+`EXTRACTION_LLM_MODEL=mistralai/mistral-small-latest`) to enable.
+
+| Model | OpenRouter ID | Provider pin | Hosting | Notes |
+|-------|---------------|--------------|---------|-------|
+| Mistral Small Latest | `mistralai/mistral-small-latest` | `mistral` | Paris (Mistral SA) | v0.5 sovereign default |
+| Mistral Medium | `mistralai/mistral-medium-latest` | `mistral` | Paris | 3× cost, higher quality for V1 |
+
+Smoke test for the v0.5 sovereign swap (3 cases, ~$0.05):
+
+```python
+import asyncio
+from pathlib import Path
+from benchmarks.runner import run
+from evaluation.schema import load_cases
+
+cases = load_cases(Path("evaluation/cases.json"))
+results = asyncio.run(run(
+    stage="query_answerer",
+    model_list=[
+        "google/gemini-2.5-flash",
+        "mistralai/mistral-small-latest",
+    ],
+    cases=cases,
+    store_root=Path("store"),
+    working_dir=Path(".lightrag"),
+    case_limit=3,
+))
+```
+
+Pass criterion: `fact_coverage` ≥ Gemini Flash − 0.05 on the 3 cases.
+
 ### Tier 3 — future / local (not yet available on OpenRouter)
 
 | Model | Notes |

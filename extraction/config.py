@@ -112,6 +112,12 @@ class ExtractionConfig:
     entity_types: list[str] = field(default_factory=lambda: list(_DEFAULT_ENTITY_TYPES))
     temporal_user_prompt: str = _DEFAULT_TEMPORAL_USER_PROMPT
     temperature: float = _DEFAULT_TEMPERATURE
+    # Phase 8b.4 — sovereign-routable LLM (charter §3.8 r7).
+    # OpenRouter accepts `provider.order=[...]` to pin which upstream
+    # provider serves a request. Empty tuple = let OpenRouter route freely
+    # (current Gemini behavior). Set to ("mistral",) for the v0.5 EU /
+    # RGPD-aligned routing.
+    provider_order: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ExtractionConfig":
@@ -119,6 +125,8 @@ class ExtractionConfig:
         env = env if env is not None else os.environ
         raw_types = env.get("EXTRACTION_ENTITY_TYPES", "")
         types = _parse_csv_list(raw_types) if raw_types else list(_DEFAULT_ENTITY_TYPES)
+        raw_providers = env.get("EXTRACTION_PROVIDER_ORDER", "")
+        providers: tuple[str, ...] = tuple(_parse_csv_list(raw_providers)) if raw_providers else ()
         return cls(
             llm_model=env.get("EXTRACTION_LLM_MODEL", _DEFAULT_LLM_MODEL),
             embed_model=env.get("EXTRACTION_EMBED_MODEL", _DEFAULT_EMBED_MODEL),
@@ -130,6 +138,7 @@ class ExtractionConfig:
                 "EXTRACTION_TEMPORAL_USER_PROMPT", _DEFAULT_TEMPORAL_USER_PROMPT
             ),
             temperature=float(env.get("EXTRACTION_TEMPERATURE", str(_DEFAULT_TEMPERATURE))),
+            provider_order=providers,
         )
 
     def addon_params(self) -> dict:

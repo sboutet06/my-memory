@@ -89,3 +89,32 @@ def test_temperature_default_is_zero_for_reproducibility() -> None:
 def test_temperature_overridable_via_env() -> None:
     cfg = ExtractionConfig.from_env({"EXTRACTION_TEMPERATURE": "0.7"})
     assert cfg.temperature == 0.7
+
+
+# --- Phase 8b.4: sovereign-routable LLM ----------------------------------
+
+
+def test_provider_order_default_is_empty() -> None:
+    """No provider pinning by default — preserves current Gemini behavior."""
+    cfg = ExtractionConfig.from_env({})
+    assert cfg.provider_order == ()
+
+
+def test_provider_order_overridable_single_value() -> None:
+    cfg = ExtractionConfig.from_env({"EXTRACTION_PROVIDER_ORDER": "mistral"})
+    assert cfg.provider_order == ("mistral",)
+
+
+def test_provider_order_overridable_ranked_list() -> None:
+    """Comma-separated entries preserve order — first = preferred upstream."""
+    cfg = ExtractionConfig.from_env(
+        {"EXTRACTION_PROVIDER_ORDER": "mistral,together,openai"}
+    )
+    assert cfg.provider_order == ("mistral", "together", "openai")
+
+
+def test_provider_order_strips_whitespace_and_blanks() -> None:
+    cfg = ExtractionConfig.from_env(
+        {"EXTRACTION_PROVIDER_ORDER": " mistral ,, together , ,openai"}
+    )
+    assert cfg.provider_order == ("mistral", "together", "openai")
