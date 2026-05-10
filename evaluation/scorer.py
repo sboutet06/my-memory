@@ -131,6 +131,55 @@ def score_conflict_detection_coverage(
     return _substring_coverage(expected_conflicts, answer)
 
 
+def score_abstention_accuracy(expects_abstention: bool, answer: str) -> float:
+    """1.0 iff the answer correctly abstains (or correctly answers).
+
+    Phase 8b.6 — premortem F6 / charter §3.8c. The accountability product
+    must be allowed to say "I do not have sufficient evidence" rather
+    than confabulate. This metric scores whether the query answerer
+    abstains on cases where the corpus does not warrant a confident
+    answer.
+
+    Semantics:
+    - `expects_abstention=False`: this case does not measure abstention
+      → 1.0 (skip from this metric's perspective; other metrics judge).
+    - `expects_abstention=True`: the corpus does NOT contain sufficient
+      evidence. 1.0 if the answer surfaces an abstention marker, else
+      0.0. Markers cover both French ("insuffisant", "ne dispose pas",
+      "n'apparaît pas", "absent du corpus", "aucune information") and
+      English fallbacks ("insufficient evidence", "do not have
+      sufficient", "no information", "cannot determine").
+
+    Forbidden-style anti-marker (for future extension): if the answer
+    confidently asserts a value AND we expected abstention, that's a
+    confabulation. v0.5 scores binary on the marker only; calibration
+    against confabulation is V1 work.
+    """
+    if not expects_abstention:
+        return 1.0
+
+    folded = _fold(answer)
+    # Permissive marker set: any single phrase here = abstention.
+    # FR + EN; folded comparison strips accents and lowercases.
+    markers = (
+        # French
+        "insuffisant", "insuffisamment", "pas suffisamment",
+        "ne dispose pas", "ne contient pas", "ne contient aucun",
+        "n'apparait pas", "n apparait pas",
+        "absent du corpus", "aucune information",
+        "non disponible", "impossible de determiner",
+        # English
+        "insufficient", "no information", "cannot determine",
+        "not enough", "do not have sufficient",
+        "does not contain sufficient", "does not contain enough",
+        "lacks sufficient",
+    )
+    for marker in markers:
+        if _fold(marker) in folded:
+            return 1.0
+    return 0.0
+
+
 def count_forbidden(forbidden: Iterable[str], answer: str) -> int:
     """Number of forbidden entries present in the answer. Term-level count.
 

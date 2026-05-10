@@ -456,6 +456,40 @@
         "phase8"
       ],
       "notes": "Initial rate 950€/day; avenant changes it to 1100€ from May 2022. System should mention both with their effective dates."
+    },
+    {
+      "id": "abstention-no-medical-history",
+      "question": "Quels sont les antécédents médicaux de Sébastien Boutet d'après les documents ?",
+      "mode": "hybrid",
+      "expects_abstention": true,
+      "tags": [
+        "abstention",
+        "phase8b6"
+      ],
+      "notes": "The corpus contains no medical records for the dogfood subject. Confabulation = pull medical-shaped strings from elsewhere; correct answer = explicit abstention."
+    },
+    {
+      "id": "abstention-out-of-temporal-range",
+      "question": "Quel était le revenu fiscal de référence de Sébastien Boutet en 1995 ?",
+      "mode": "hybrid",
+      "expects_abstention": true,
+      "tags": [
+        "abstention",
+        "phase8b6",
+        "temporal"
+      ],
+      "notes": "No tax document in the corpus covers 1995. The answerer must abstain rather than infer or extrapolate from later years."
+    },
+    {
+      "id": "abstention-irrelevant-predicate",
+      "question": "Quelle marque et quel modèle de voiture sont décrits dans le compromis de vente immobilier ?",
+      "mode": "hybrid",
+      "expects_abstention": true,
+      "tags": [
+        "abstention",
+        "phase8b6"
+      ],
+      "notes": "The compromis-de-vente concerns real estate; vehicle predicate is irrelevant to that document. The answerer must surface the mismatch rather than inventing a make/model."
     }
   ]
 }

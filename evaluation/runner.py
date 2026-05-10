@@ -13,6 +13,7 @@ from lightrag import QueryParam
 from evaluation.schema import EvalCase, EvalCaseResult
 from evaluation.scorer import (
     count_forbidden,
+    score_abstention_accuracy,
     score_conflict_detection_coverage,
     score_document_coverage,
     score_entity_coverage,
@@ -62,10 +63,11 @@ def score_case(
     fpc = score_fact_provenance_coverage(case.expected_provenance, answer)
     cdc = score_conflict_detection_coverage(case.expected_conflicts, answer)
     ta = score_temporal_accuracy(case.expected_temporal, answer)
+    aa = score_abstention_accuracy(case.expects_abstention, answer)
     forbid = count_forbidden(case.forbidden_facts, answer)
     passed = (
         doc == 1.0 and ent == 1.0 and fac == 1.0 and fpc == 1.0
-        and cdc == 1.0 and ta == 1.0 and forbid == 0
+        and cdc == 1.0 and ta == 1.0 and aa == 1.0 and forbid == 0
     )
     return EvalCaseResult(
         case_id=case.id,
@@ -79,6 +81,7 @@ def score_case(
         fact_provenance_coverage=fpc,
         conflict_detection_coverage=cdc,
         temporal_accuracy=ta,
+        abstention_accuracy=aa,
         forbidden_violations=forbid,
         passed=passed,
     )
@@ -190,6 +193,9 @@ def summarize(results: list[EvalCaseResult]) -> dict:
         ),
         "mean_temporal_accuracy": (
             sum(r.temporal_accuracy for r in results) / n
+        ),
+        "mean_abstention_accuracy": (
+            sum(r.abstention_accuracy for r in results) / n
         ),
         "total_forbidden_violations": sum(r.forbidden_violations for r in results),
     }

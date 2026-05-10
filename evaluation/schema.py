@@ -28,6 +28,10 @@ class EvalCase(BaseModel):
     expected_conflicts: list[str] = Field(default_factory=list)
     expected_temporal: list[str] = Field(default_factory=list)
     forbidden_facts: list[str] = Field(default_factory=list)
+    # Phase 8b.6 (premortem F6): if True, the corpus does NOT contain
+    # sufficient evidence for a confident answer; the query answerer
+    # should abstain rather than confabulate.
+    expects_abstention: bool = False
     notes: str = ""
     tags: list[str] = Field(default_factory=list)
 
@@ -53,6 +57,7 @@ class EvalCaseResult(BaseModel):
     fact_provenance_coverage: float = 1.0
     conflict_detection_coverage: float = 1.0
     temporal_accuracy: float = 1.0
+    abstention_accuracy: float = 1.0
     forbidden_violations: int
     passed: bool  # True iff all coverages==1 and forbidden_violations==0
 

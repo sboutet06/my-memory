@@ -52,7 +52,20 @@ _DEFAULT_TEMPORAL_USER_PROMPT = (
     "the source date when stating each fact. "
     "If multiple facts of the same kind appear with the same latest "
     "date, or if the chronology is ambiguous, say so explicitly rather "
-    "than guess."
+    "than guess. "
+    # Phase 8b.6 abstention authorization (charter §3.8c, premortem F6).
+    # Without this clause, the answerer fluently confabulates when the "
+    # corpus does not support a confident answer — directly contradicting "
+    # the §1.2 accountability promise. "
+    "If the provided context does not contain sufficient evidence to "
+    "answer the question, respond explicitly with a sentence such as "
+    "« Le corpus ne contient pas suffisamment d'informations pour "
+    "répondre à cette question » (or its English equivalent "
+    "« insufficient evidence »). Do NOT invent facts, do NOT speculate, "
+    "do NOT extrapolate beyond what the context contains. Saying "
+    "« I do not have sufficient evidence » is a correct, expected, and "
+    "trust-preserving answer when the corpus does not support a "
+    "confident response."
 )
 
 

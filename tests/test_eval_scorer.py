@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from evaluation.scorer import (
     count_forbidden,
+    score_abstention_accuracy,
     score_document_coverage,
     score_entity_coverage,
     score_fact_coverage,
@@ -116,3 +117,53 @@ def test_forbidden_multiple_terms() -> None:
 
 def test_empty_forbidden_list_zero_violations() -> None:
     assert count_forbidden([], "anything") == 0
+
+
+# -- abstention accuracy (Phase 8b.6) -------------------------------------
+
+def test_abstention_not_expected_returns_perfect() -> None:
+    """expects_abstention=False → metric is N/A → 1.0 (perfect)."""
+    assert score_abstention_accuracy(False, "Confident answer.") == 1.0
+    assert score_abstention_accuracy(False, "") == 1.0
+
+
+def test_abstention_expected_with_marker_french() -> None:
+    answer = "Le corpus ne contient pas suffisamment d'informations pour répondre."
+    assert score_abstention_accuracy(True, answer) == 1.0
+
+
+def test_abstention_expected_with_marker_english() -> None:
+    answer = "There is insufficient evidence in the corpus to answer."
+    assert score_abstention_accuracy(True, answer) == 1.0
+
+
+def test_abstention_expected_no_marker_returns_zero() -> None:
+    """Confabulation is the failure mode — answer fluently without grounds."""
+    answer = "L'adresse est 10 Rue de la Paix, Paris."
+    assert score_abstention_accuracy(True, answer) == 0.0
+
+
+def test_abstention_marker_accent_insensitive() -> None:
+    """`n'apparaît` should match the bare-stripped marker variant."""
+    answer = "Cette information n'apparaît pas dans les documents fournis."
+    assert score_abstention_accuracy(True, answer) == 1.0
+
+
+def test_abstention_marker_case_insensitive() -> None:
+    answer = "INSUFFICIENT EVIDENCE in the corpus."
+    assert score_abstention_accuracy(True, answer) == 1.0
+
+
+def test_abstention_partial_match_in_long_answer() -> None:
+    """A long answer containing the marker phrase still passes."""
+    answer = (
+        "I looked carefully through the documents. After review, the "
+        "corpus does not contain sufficient information about this "
+        "specific topic to answer reliably."
+    )
+    assert score_abstention_accuracy(True, answer) == 1.0
+
+
+def test_abstention_empty_answer_returns_zero() -> None:
+    """Empty answer is not an abstention — it's a non-response."""
+    assert score_abstention_accuracy(True, "") == 0.0
