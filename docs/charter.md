@@ -123,19 +123,33 @@ dogfood):
 - YAML files under `corrections/source/`, `corrections/derivation/`,
   `corrections/packs/`. Git-versioned, hand-editable, PR-reviewable.
 - `python -m corrections review|show|stats`.
+- **Admin conflicts dashboard (V1, decided 2026-05-10)**: read-only web
+  UI listing open Conflicts with one-click resolve actions
+  (`pick winner / mark coexist / mark temporal`). Writes still flow
+  through YAML + Git under the hood — the UI emits a YAML correction
+  file and stages it. Minimum viable, not a full admin GUI; enough so
+  that a non-developer secretary at a customer SMB can triage conflicts
+  without learning YAML. Scoped originally for V2 (see §2.6 historical),
+  promoted to V1 by the 2026-05-10 premortem (SMB target inaccessible
+  without it).
 
 **Programmatic surface** (integrations, downstream apps, agent consumers):
 
-- **FastAPI HTTP** — endpoints below.
-- **MCP server (Phase 11)** — same capabilities as agent-callable tools,
-  for LLM-driven consumers such as the author's `orchestrator` project.
+- **MCP server (Phase 10, decided 2026-05-10)** — primary first surface.
+  Built before FastAPI because the only concrete consumer
+  (`/Users/sboutet/projects/orchestrator`) is LLM-agent shaped, not HTTP
+  shaped. Wraps the same service layer as FastAPI.
+- **FastAPI HTTP (Phase 11)** — endpoints below. Same service layer as
+  MCP; no duplicate logic.
 
 **Consumer surface** (non-technical end users — lawyers, clinicians,
 compliance officers; V2, scoped in §2.6 so V1 API contracts do not box it
 out):
 
 - Minimal query UI with inline citations, conflicts view, as-of date
-  picker, faceted filters.
+  picker, faceted filters. Distinct from the V1 admin conflicts
+  dashboard above: consumer = end-user query; admin = triage of
+  pipeline-detected conflicts.
 
 HTTP endpoints (V1):
 
@@ -156,8 +170,10 @@ conflict IDs + provenance trail, not opaque strings.
 ### 2.3 Non-goals (V1)
 
 - Multi-tenant SaaS. Self-hosted per organization.
-- Admin authoring GUI — correction authoring stays YAML + Git. (Consumer
-  query UI is scoped in §2.6 but deferred to V2.)
+- Full admin authoring GUI — only the **conflicts triage dashboard** is in
+  V1 (read-only with one-click resolve emitting YAML). Source / derivation
+  / pack correction authoring stays YAML + Git. Consumer query UI is
+  scoped in §2.6 but deferred to V2.
 - Real-time streaming ingest.
 - Memory / workflow rules layer (deferred to V2).
 - Agent-style orchestration. The API is consumed, not driven from inside.
@@ -293,7 +309,23 @@ Claim                               # NEW first-class
   extractor: str                    # 'llm:gemini-2.5-flash@2026-04',
                                     # 'pack:bank_statement@1.2'
   extracted_at: Date
-  confidence: float
+  confidence: ConfidenceLevel       # CATEGORICAL (decided 2026-05-10).
+                                    # Enum: deterministic | llm_high | llm_low.
+                                    # Float dropped — un-calibrated float is
+                                    # theatre and contradicts the
+                                    # accountability promise. Calibration set
+                                    # would be needed to revive a float;
+                                    # categorical is honest by construction.
+                                    # Mapping rules:
+                                    #   deterministic → regex/structured
+                                    #     extractor (bank, IBAN parser).
+                                    #   llm_high → LLM extraction +
+                                    #     deterministic post-validation
+                                    #     (typed predicate, value matches
+                                    #     declared format).
+                                    #   llm_low → LLM extraction without
+                                    #     post-validation (free-text
+                                    #     predicates, fallback path).
   ingestion_version: int
 
 Conflict                            # NEW first-class
@@ -438,6 +470,67 @@ Engineering rules:
    table without appearing in the benchmark.
 6. **≥ 2 viable choices per stage before V1 ships.** If only one model
    meets the capability bar, the stage is a lock-in risk and is flagged.
+7. **Local-LLM swap is a v0.5 deliverable, not deferred** (decided
+   2026-05-10 premortem). At least ONE local model wired through
+   `extraction/config.py` and runnable on the dev machine before V1
+   pilot. Without this, the announced FR legal/medical market is
+   inaccessible (RGPD + DPA blocks any extraction stage routing data to
+   US-hosted LLMs). Concrete target: Ollama or MLX hosting of
+   `qwen2.5:7b` (or successor) for the extraction stage; metric =
+   `fact_coverage` no worse than -0.05 vs Gemini 2.5 Flash on the eval
+   suite. Was §7.6 deferred — promoted.
+
+### 3.8b Extraction cache and idempotence (v0.5)
+
+Decided 2026-05-10 premortem. The accountability contract requires that
+re-extracting the same document with the same extractor produces the same
+Facts. Two fragilities to close before V1:
+
+1. **OpenRouter provider load-balancing** introduces seed variance even at
+   `temperature=0` (lesson 2026-04-18). Mitigation: keep `temperature=0`
+   AND prefer single-provider routing when available.
+2. **No version-keyed cache.** LightRAG's `kv_store_llm_response_cache.json`
+   keys on prompt content. Adequate for cost but not for *idempotence
+   under prompt edits*. v0.5 introduces an extraction cache keyed on
+   `(doc_hash, extractor_version, model_id, prompt_hash)`. Cache hit ⇒
+   skip LLM call, reuse stored result. Cache miss ⇒ extract, store, emit
+   Facts. Lives under `extraction_store/cache/`. Cheap to add now,
+   painful to retrofit at scale.
+
+### 3.8c Abstention and "insufficient evidence" handling (v0.5)
+
+Decided 2026-05-10. Charter §3.6 already lists calibration cases as a
+gap (E3). Premortem promotes to v0.5: an accountability product that
+fluently confabulates "yes, here is the clause" when no clause exists in
+the corpus is broken at its core. Concrete deliverable:
+
+- ≥ 3 eval cases where `expected_answer = "insufficient_evidence"`.
+- Metric `abstention_accuracy` in `evaluation/scorer.py`: did the answerer
+  abstain when the corpus warrants it?
+- Pass criterion: `abstention_accuracy ≥ 0.75` on those cases (target
+  raised in V1 to ≥ 0.90).
+- Query answerer prompt must explicitly authorize "I do not have
+  sufficient evidence in the corpus" and surface a structured response
+  shape distinguishing "answered" vs "abstained".
+
+### 3.9 Performance budget (v0.5 → V1)
+
+Decided 2026-05-10. JSONL fact store works at dogfood scale; for the V1
+pilot bar (≈ 50k Facts / 200 docs) latency budgets are required to avoid
+a "demo well, scale badly" trap. Targets to hold by V1:
+
+| Operation | p95 target | At |
+|---|---|---|
+| `GET /facts/{id}` (MCP/API) | < 100ms | 50k Facts |
+| `GET /entities/{id}?as_of=` | < 300ms | 50k Facts |
+| `GET /conflicts` (paged, n=50) | < 500ms | 5k open conflicts |
+| `python -m facts detect-conflicts` | < 30s | 50k Facts |
+| `python -m facts supersede` | < 30s | 50k Facts |
+| End-to-end `/query` | < 5s | 50k Facts, 200 docs |
+
+When JSONL scan misses a target, migrate that surface to DuckDB. Don't
+pre-optimize — measure first, port second. The budget is the trigger,
+not the plan.
 
 ---
 
@@ -505,14 +598,32 @@ Categorized by what they block.
 
 - **S1. No fact-level provenance.** Document-level only. The entire
   accountability pitch rests on this. Severity: blocking for V1.
+  *Status 2026-05-10: schema + bank pack done in Phase 6. Non-bank
+  predicates (address, employer, birthdate) not yet wired — see S7.*
 - **S2. No contradiction objects.** Conflicting facts silently merge or
   shadow. The coherence pillar of the epistemic contract is unbuilt.
-  Severity: blocking for V1.
+  Severity: blocking for V1. *Status 2026-05-10: detector + YAML UX +
+  API done in Phase 7. 0 conflicts in store because S7 not closed.*
 - **S3. No per-fact temporal validity.** Only description prefixes. Cannot
   answer "as of 2020-06-01" queries. Severity: blocking for V1.
+  *Status 2026-05-10: Phase 8 partial — `valid_from` + supersession +
+  `as_of` API done. Bites only on bank Transactions until S7 closes.*
 - **S4. Update / re-ingest semantics undefined.** `replaced_by` field
   exists in YAML, no pipeline behavior. Versioning pillar unbuilt.
-  Severity: blocking for V1.
+  Severity: blocking for V1. *Status 2026-05-10: still open — Phase 8.2
+  + 8.3 deferred at session 5; promoted into v0.5 by 2026-05-10
+  premortem.*
+- **S5. No abstention behavior.** Query answerer always answers — no
+  "insufficient evidence" path. Discovered 2026-05-10 premortem;
+  contradicts §1.2 accountability promise. Severity: blocking for V1.
+- **S6. No local-LLM option.** All extraction stages call OpenRouter →
+  Gemini. RGPD/DPA blocks announced FR legal/medical market. Severity:
+  blocking for V1 pilot. Discovered 2026-05-10; promoted to v0.5.
+- **S7. Pack emits Facts only on bank Transactions.** Synthetic
+  contradiction/temporal corpus exists but no extractor populates
+  Facts for `address`, `birthdate`, `employer` — so Phase 7 / Phase 8
+  metrics measure nothing on real or synthetic non-bank docs.
+  Discovered 2026-05-10 premortem. Severity: blocking for V1.
 
 ### 5.2 Architectural (block scale)
 
@@ -615,6 +726,17 @@ re-implementing common infrastructure.
 Ordered by leverage on the V1 thesis. Dates assume 2–3 focused sessions per
 week; adjust on confirmation of §7.7 D-deadline.
 
+### Milestone naming (decided 2026-05-10)
+
+- **v0.5** = "differentiator demonstrably works end-to-end on dogfood +
+  synthetic adversarial corpus, distributable to a single pilot". Closes
+  S4 / S5 / S6 / S7 + adds 8.2/8.3 + admin conflicts GUI minimal + MCP
+  minimal. Ends with Phase 10 (MCP).
+- **V1** = "ready for first paying B2B pilot". Adds Phase 9 cleanup
+  (Profile fragmentation, namespace, QueryDriver wrapper, incremental
+  extract), Phase 11 FastAPI complete, eval expansion to 25–30 cases, CI
+  gate. Optionally one second domain pack (legal first, per §7.7 D1).
+
 ### 7.1 Phase 6 — Fact model and provenance
 
 *Target: 2026-05-15.*
@@ -665,9 +787,48 @@ call.
 - **8.6** Eval: update cases (≥ 5), contradictions across time-varying vs.
   time-invariant.
 
+### 7.3b Phase 8b — v0.5 consolidation (decided 2026-05-10)
+
+*Target: 2026-06-15. Inserted between Phase 8 and Phase 9 by the
+2026-05-10 premortem.*
+
+Closes S4–S7 and §3.8 / §3.8b / §3.8c v0.5 deliverables before any
+cleanup work. Without 8b, the v0.5 differentiator pitch is theatre.
+
+- **8b.1** Close Phase 8 deferred items: 8.2 ingestion_version archive
+  (`store/<doc_id>/versions/<v>/`, `current` pointer), 8.3
+  `replaced_by` wiring through the ingest pipeline.
+- **8b.2** Categorical confidence migration (S5 prerequisite): rewrite
+  `Claim.confidence: float` → `ConfidenceLevel` enum
+  (`deterministic | llm_high | llm_low`). Migrate existing 17 claims on
+  disk (deterministic). Update API + scorer + tests.
+- **8b.3** Extract caching keyed on
+  `(doc_hash, extractor_version, model_id, prompt_hash)`. Lives under
+  `extraction_store/cache/`. Cache hit ⇒ no LLM call. Idempotence test:
+  `extract → store fingerprint → re-extract → bit-identical Facts`.
+- **8b.4** Local LLM swap (S6): one local model wired through
+  `extraction/config.py` for the extraction stage. Target: Ollama or
+  MLX `qwen2.5:7b`. Smoke test: `python -m evaluation --runs 1` on a
+  3-case subset with the local model. Pass: `fact_coverage` not worse
+  than -0.05 vs Gemini.
+- **8b.5** Non-bank Fact extractors (S7): add `address`, `birthdate`,
+  `employer` predicate extractors in `personal_documents`. LLM-extract
+  with deterministic post-validation (date format, regex on address
+  shape, etc.). `confidence = llm_high` when post-validation passes,
+  `llm_low` when it does not. Synthetic corpus must produce ≥ 1
+  Conflict and ≥ 1 supersession on `address` chain.
+- **8b.6** Abstention (S5 / §3.8c): query answerer can return
+  "insufficient evidence". Add ≥ 3 eval cases with
+  `expected_answer = "insufficient_evidence"` + metric
+  `abstention_accuracy`. Pass: ≥ 0.75.
+- **8b.7** E2E phase gate for Phase 7 + Phase 8 + Phase 8b: rerunnable
+  script `scripts/phase-gate-v0.5.sh` covering ingest synthetic →
+  extract → extract-structured → detect-conflicts → supersede → eval,
+  with all metric thresholds asserted.
+
 ### 7.4 Phase 9 — Cleanup and hardening
 
-*Target: 2026-07-01.*
+*Target: 2026-07-15. (Re-dated 2026-05-10.)*
 
 - **9.1** Profile fragmentation fix (rerun alias after index build, or
   canonical-only profiles).
@@ -677,47 +838,60 @@ call.
 - **9.4** Incremental extraction (per-doc diff).
 - **9.5** Eval expansion to 25–30 cases.
 - **9.6** CI gate on eval regression.
+- **9.7** Admin conflicts dashboard (V1 surface, decided 2026-05-10).
+  Read-only web UI listing open Conflicts; one-click `pick winner /
+  mark coexist / mark temporal` emits a YAML correction file. Stack:
+  minimal — server-rendered HTML or a tiny SPA, whatever costs least
+  given the v0.5/V1 timeline. Auth: same model as MCP/FastAPI (Phase
+  11). Out of scope: source/derivation/pack correction authoring (stays
+  YAML+Git+CLI).
+- **9.8** Performance budget (charter §3.9) measured + asserted in CI.
+  Surfaces missing the budget trigger a JSONL → DuckDB port for that
+  surface only.
 
-### 7.5 Phase 10 — FastAPI V1
+### 7.5 Phase 10 — MCP server
 
-*Target: 2026-07-15.*
+*Target: 2026-08-01. (Reordered 2026-05-10: was Phase 11, swapped with
+FastAPI.)*
 
-- **Start only after 6–8 are green against the eval suite.** Otherwise
-  the API locks in wrong semantics.
-- Endpoints as §2.2.
-- OpenAPI spec committed as `docs/api-v1.yaml`.
-- Response shapes designed for V2 consumer UI (§2.6): structured answer,
-  inline citation markers mapped to fact IDs, per-fact confidence.
+MCP (Model Context Protocol) is the natural consumption path for the
+only concrete consumer (the author's `orchestrator` project at
+`/Users/sboutet/projects/orchestrator`). Built before the FastAPI HTTP
+surface so v0.5 ships against a real client, not a hypothetical one.
 
-### 7.5b Phase 11 — MCP server
-
-*Target: 2026-08-01. May run partially in parallel with Phase 10.*
-
-MCP (Model Context Protocol) is the natural consumption path for
-LLM-driven consumers. Primary first client: the author's `orchestrator`
-project at `/Users/sboutet/projects/orchestrator`.
-
-- **11.1** MCP server wrapping the Phase 10 service layer. Tools:
+- **10.1** Service layer extraction first — the shared core both MCP and
+  the future FastAPI HTTP surface (Phase 11) wrap. Lives under
+  `service/` (new package). Stateless functions; no MCP/HTTP knowledge.
+- **10.2** MCP server scaffolded using the latest Anthropic MCP Python
+  SDK. Tools:
   - `my_memory.search(query)` → hybrid retrieval result.
   - `my_memory.fact_get(fact_id)` → fact + provenance + conflicts.
   - `my_memory.entity_get(entity_id, as_of?)` → entity temporal view.
   - `my_memory.conflicts_list(filter?)` → open conflicts.
   - `my_memory.document_get(doc_id)` → document metadata + content.
-- **11.2** Tool descriptions tuned for agent consumption: cost-per-call
+- **10.3** Tool descriptions tuned for agent consumption: cost-per-call
   hint, response-shape example, common pitfalls, idempotency guarantee.
-- **11.3** Integration test: end-to-end orchestrator flow — request a
+- **10.4** Integration test: end-to-end orchestrator flow — request a
   fact, receive provenance chain, resolve a conflict via correction
   YAML, re-query, receive resolved value.
-- **11.4** **No duplicate logic.** FastAPI and MCP both wrap the same
-  service layer; adding a capability in one is never a reason to add it
-  in the other.
+
+### 7.5b Phase 11 — FastAPI V1
+
+*Target: 2026-08-15. (Reordered 2026-05-10: was Phase 10.)*
+
+- Endpoints as §2.2.
+- OpenAPI spec committed as `docs/api-v1.yaml`.
+- Response shapes designed for V2 consumer UI (§2.6): structured answer,
+  inline citation markers mapped to fact IDs, per-fact confidence (now
+  categorical per §3.2).
+- **Same service layer as Phase 10 MCP. Adding capability on one side is
+  never reason to add it on the other.**
 
 ### 7.6 Deferred, explicit
 
-- **Sovereign LLM swap per stage**: per §3.8 routing, every stage must
-  have ≥ 2 viable models before V1. Open-weights local models (Qwen,
-  DeepSeek, Llama, Gemma) enter the benchmark in Phase 6. Full offline
-  operation: when a real B2B conversation requires it, or after Phase 10.
+- **~~Sovereign LLM swap per stage~~** — promoted to v0.5 (§3.8 rule 7).
+  ONE local model in v0.5 (extraction stage); the per-stage ≥ 2 sweep
+  stays for V1.
 - **Phase 5 original (relation-type induction)**: deferred;
   answer-shaped nodes + Profile expansion cover breadth queries for now.
 - **Workflow layer (LangGraph or similar)**: post-V1; the `orchestrator`
@@ -760,6 +934,10 @@ them.
   `confidence: float`; `/query` optionally filters `confidence >
   threshold`. Confirm or exclude. *Needed for Phase 6.*
   Response: Agree with the proposal
+  **Revised 2026-05-10 (premortem D9 supersedes D4)**: float dropped,
+  replaced by `ConfidenceLevel` enum
+  (`deterministic | llm_high | llm_low`). Un-calibrated float is theatre
+  and contradicts §1.2. See §3.2 + Phase 8b.2.
 
 - **D5. Eval suite expansion budget.** Each new case ≈ 30–60 min authoring
   plus ongoing maintenance. Target 25–30 cases ≈ 10h of work. Scheduled
@@ -800,6 +978,27 @@ them.
   horizon, but requirements surfaced there will refocus the Phase 7
   predicate registry and may promote `legal` pack work ahead of Phase 9
   cleanup if the conversation converts. Follow-up expected within ~1 week.
+
+### Decisions added 2026-05-10 (premortem)
+
+- **D7. Admin conflicts GUI in V1**: yes (read-only dashboard with
+  one-click resolve, emits YAML). Without it the SMB target market is
+  inaccessible. Implemented in Phase 9.7. See §2.2.
+- **D8. MCP before FastAPI**: yes. Phase 10 = MCP, Phase 11 = FastAPI.
+  Built for the only concrete consumer (`orchestrator`), not a
+  hypothetical HTTP one. See §7.5 / §7.5b.
+- **D9. Confidence categorical, not float** (supersedes D4): enum
+  `deterministic | llm_high | llm_low`. Honest by construction; float
+  would require a calibration set we do not have. See §3.2 + §3.8c +
+  Phase 8b.2.
+- **D10. Local LLM in v0.5, not deferred** (supersedes §7.6 entry): one
+  local model wired through `extraction/config.py`. See §3.8 rule 7 +
+  Phase 8b.4.
+- **D11. End-to-end OCR stress in v0.5 corpus**: user requested
+  exercising the full chain including OCR. Add representative scanned /
+  degraded documents to the corpus (notarial / legal / medical / old
+  invoices) — see Phase 8b corpus subtask. Raw scans only; no
+  pre-OCR'd doctored content.
 
 ---
 

@@ -1005,3 +1005,161 @@ Phase 9 — cleanup and hardening. 9.1 (Profile fragmentation), 9.2 (Entity
 namespace separation), 9.3 (QueryDriver interface), 9.4 (incremental
 extraction), 9.5 (eval expansion), 9.6 (CI gate). Or: defer to legal-pack
 worktree work after lawyer meeting.
+
+---
+
+## Premortem + v0.5 scoping (session, 2026-05-10)
+
+**Trigger**: user asked for an état des lieux, then a premortem of the
+V1 product, before continuing work. No code changes this session — only
+charter / tasks / intent updates.
+
+### État des lieux
+
+- Branch: `master`, clean.
+- Tests collected: 640 (`pytest --co -q -m "not integration"`).
+- Eval cases: 26 (11 baseline + 5 Phase 6 + 5 Phase 7 + 5 Phase 8).
+- Corpus: 32 real + 11 synthetic = 43 in `store/`.
+- Facts store: 17 Facts, 17 Claims, **0 Conflicts** (bank Transaction
+  is the only Fact-emitting extractor; synthetic adversarial corpus has
+  no extractor for `address`/`birthdate`/`employer`).
+- API surface: stub only (3 endpoints).
+- CI: none.
+- Phase 7+8 e2e gate: never run.
+
+### Premortem — top failure modes (V1 hypothetical 2026-08 launch)
+
+🔴 **F1. Differentiator does not bite.** 0 Conflicts in store. Phase 7/8
+metrics measure infrastructure, not real-world detection. Customer
+ingests archive, sees 0 conflicts, declares the USP nonexistent.
+
+🔴 **F2. RGPD/DPA blocks FR legal pilot.** Charter §1.2 promises
+sovereignty; §3.8 routes extraction to OpenRouter→Gemini (US-hosted).
+First notarial pilot opens DPA, refuses before demo. §7.6 deferred
+"open-weights local" — too late.
+
+🔴 **F3. Non-determinism in extraction.** OpenRouter provider
+load-balancing yields seed variance even at temp=0 (lesson 2026-04-18).
+LightRAG cache keys on prompt only. Re-extract = paid + non-identical
+Facts. Customer: "Why did Fact F disappear?". Trust killer.
+
+🟠 **F4. YAML+Git correction excludes SMB.** Notaire/SMB has no
+sysadmin. Secretary won't open YAML. Forces +5–15k€ integrator → SMB
+target inaccessible.
+
+🟠 **F5. Float confidence = theatre.** D4 says `confidence: float`. No
+calibration set. Bank = 1.0; LLM = ?. Cannot answer "why 0.85". An
+accountability product that lies about its own confidence.
+
+🟠 **F6. No abstention path.** System always answers. First customer
+asks "is there a non-compete clause?" → confabulates "yes". E3
+calibration cases deferred — directly contradicts §1.2.
+
+🟠 **F7. MCP last (was Phase 11).** Only concrete consumer is
+`orchestrator`. FastAPI built for hypothetical client. MCP and FastAPI
+diverge. Phase 11 audit "no duplication" hits sunk-cost wall.
+
+🟠 **F8. 8.2/8.3 deferred contradicts contract.** §1.2 says "updates
+are additions, not overwrites". 8.2 (ingestion_version archive) +
+8.3 (replaced_by wiring) skipped at session 5. First update from a
+client erases history.
+
+🟡 **F9–F13** secondary (OCR ceiling on 1990s archives, cost spiral
+without versioned cache, LightRAG lock-in deepening, no perf budget,
+brand placeholder).
+
+### Decisions (locked 2026-05-10)
+
+- **D7**: admin conflicts GUI in V1 (read-only + one-click resolve,
+  emits YAML). Implemented in Phase 9.7.
+- **D8**: MCP before FastAPI. Phase 10 = MCP, Phase 11 = FastAPI
+  (swapped from prior order).
+- **D9**: confidence categorical (`deterministic | llm_high | llm_low`)
+  — supersedes D4 float.
+- **D10**: local LLM in v0.5 (one model wired through
+  `extraction/config.py`). Promoted from §7.6 deferred.
+- **D11**: full-chain corpus exercise including OCR. User wants public
+  representative scanned docs added to v0.5 corpus.
+
+### v0.5 scope (Phase 8b, NEW)
+
+Inserted between Phase 8 and Phase 9. Closes S4 / S5 / S6 / S7 from
+charter §5.1:
+
+- **8b.1** 8.2 ingestion_version archive + 8.3 replaced_by wiring.
+- **8b.2** Categorical ConfidenceLevel migration (17 Claims on disk).
+- **8b.3** Extract caching keyed on
+  `(doc_hash, extractor_version, model_id, prompt_hash)`.
+- **8b.4** Local LLM (Ollama qwen2.5:7b proposed).
+- **8b.5** address / birthdate / employer Fact extractors in
+  `personal_documents`.
+- **8b.6** Abstention path + 3 cases + `abstention_accuracy` metric.
+- **8b.7** OCR-stress corpus + `scripts/phase-gate-v0.5.sh` enforcing
+  all metric thresholds.
+
+Expected: 18–25 commits. Target: 2026-06-15.
+
+### Corpora fetched (D11)
+
+User opted out of manual print+scan; instructed to dork existing
+public corpora. Final selection:
+
+**`raw-ocr/`** — 6 PDFs, ~22 MB, Licence Ouverte 2.0:
+- French National Assembly archives — 4 hybrid + 2 pure-image
+  rasterized.
+- 1985 written questions, 1985 questions year-end, 1992 written
+  questions, 1992 plenary debates.
+- Hybrid mode: scanned image + AN-emitted OCR text layer (typos
+  preserved). Pure image mode: Ghostscript-rasterized at 200dpi to
+  strip text layer, force ocrmac path.
+- Sources discarded: Gallica (captcha blocks WebFetch), Légifrance
+  JORF (403), Archives départementales (no crawler-friendly PDFs),
+  BIU Santé (born-digital text PDF, not scans), CAS corpus
+  (email-gated), pdf-association/pdf-corpora (anglais), Archives
+  nationales data.gouv.fr (catalog CSV only).
+
+**`raw-medical/`** — 25 French clinical cases, ~100 KB:
+- HuggingFace `mlabonne/medical-cases-fr` (8134 rows, 7 cols,
+  parquet).
+- Stratified sample across 15 medical specialties, deterministic
+  (random_state=42).
+- Markdown one-file-per-case format. License unclear on dataset card
+  → V0/v0.5 dogfood OK, switch to fully-licensed source for V1.
+- Phase 8b.5b will validate medical predicate scaffold on this
+  sample.
+
+**Discarded categories**:
+- CERFA imprimés-scannés (manual, user opted out).
+- Médical/RH templates imprimés-scannés (manual, user opted out).
+- Gallica notarial (captcha).
+
+### Reordered phases (post-2026-05-10)
+
+| Phase | Was | Now |
+|---|---|---|
+| 0 | Demo legal | Done |
+| 6 | Fact model | Done |
+| 7 | Conflicts | Done |
+| 8 | Bitemporal | Partial (8.1/8.4/8.5/8.6) |
+| **8b** | — | **NEW: v0.5 consolidation** |
+| 9 | Cleanup | + 9.7 GUI conflicts + 9.8 perf budget |
+| 10 | FastAPI | **MCP** (swapped) |
+| 11 | MCP | **FastAPI** (swapped) |
+
+### Files updated this session
+
+- `docs/charter.md` — §2.2 (admin GUI surface), §2.3 (non-goals),
+  §3.2 (categorical confidence), §3.8 rule 7 (local LLM), new §3.8b
+  (extract cache), new §3.8c (abstention), new §3.9 (perf budget),
+  §5.1 (S5/S6/S7 added, S1–S4 status updates), §7 milestone naming,
+  §7.3b (new Phase 8b), §7.4 (Phase 9 + 9.7/9.8), §7.5/§7.5b (swap),
+  §7.6 (local LLM struck), §7.7 (D7–D11 added, D4 superseded).
+- `docs/tasks.md` — §1 state refresh, §2 decisions D7–D11, §5
+  reorder, Phase 8 8.2/8.3 marked moved, new Phase 8b block, Phase 9
+  +9.7/9.8, Phases 10/11 swapped.
+- `docs/intent.md` — this entry.
+
+### Next phase
+
+Phase 8b. First action: pick OCR corpus list with user approval, then
+8b.1 (8.2 + 8.3 close).
