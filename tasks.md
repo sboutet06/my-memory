@@ -746,7 +746,7 @@ Without 8b, v0.5 cannot be claimed.
   - Commits: `feat(ingestion): ingestion_version archive`,
     `feat(corrections): wire replaced_by into ingest`.
 
-- [ ] **8b.2 Categorical confidence migration**
+- [x] **8b.2 Categorical confidence migration** (done 2026-05-10)
   - Replace `Claim.confidence: float` with
     `confidence: ConfidenceLevel` (StrEnum:
     `"deterministic" | "llm_high" | "llm_low"`).
@@ -838,7 +838,7 @@ Without 8b, v0.5 cannot be claimed.
   - Commits: `feat(pack): medical predicate scaffold`,
     `test(pack): medical Fact extractor on raw-medical sample`.
 
-- [ ] **8b.6 Abstention behavior + eval cases**
+- [x] **8b.6 Abstention behavior + eval cases** (done 2026-05-10)
   - Query answerer prompt explicitly authorizes
     `"insufficient evidence in the corpus"` as a valid response.
   - Add structured response-shape distinction
