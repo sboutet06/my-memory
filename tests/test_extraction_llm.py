@@ -5,15 +5,26 @@ The wrapper applies sovereign-routable provider pinning by injecting
 We mock `openai_complete_if_cache` to capture the kwargs without making
 real HTTP calls. Sync drivers via `asyncio.run` follow the existing
 project pattern (test_benchmarks.py).
+
+Phase 8b.3 added a fingerprint cache wrapped around the LLM call. Each
+test passes its own `cache_dir` to avoid polluting the default cache
+location and to guarantee cold cache per test (each test issues only
+one underlying call).
 """
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from pathlib import Path
 
 import pytest
 
 from extraction import llm as llm_mod
 from extraction.config import ExtractionConfig
+
+
+def _per_test_cache() -> Path:
+    return Path(tempfile.mkdtemp(prefix="extract-cache-"))
 
 
 @pytest.fixture
@@ -43,7 +54,7 @@ def _run(coro):
 def test_no_provider_order_omits_extra_body(fake_api_key, captured_call) -> None:
     """Default config = no provider pinning = no `extra_body` injection."""
     cfg = ExtractionConfig.from_env({})
-    func = llm_mod.make_llm_func(cfg)
+    func = llm_mod.make_llm_func(cfg, cache_dir=_per_test_cache())
 
     _run(func("hi"))
 
@@ -53,7 +64,7 @@ def test_no_provider_order_omits_extra_body(fake_api_key, captured_call) -> None
 
 def test_provider_order_injects_extra_body(fake_api_key, captured_call) -> None:
     cfg = ExtractionConfig.from_env({"EXTRACTION_PROVIDER_ORDER": "mistral"})
-    func = llm_mod.make_llm_func(cfg)
+    func = llm_mod.make_llm_func(cfg, cache_dir=_per_test_cache())
 
     _run(func("hi"))
 
@@ -66,7 +77,7 @@ def test_provider_order_preserves_caller_extra_body(fake_api_key, captured_call)
     """If the caller passes extra_body already, provider routing merges
     instead of overwriting unrelated keys."""
     cfg = ExtractionConfig.from_env({"EXTRACTION_PROVIDER_ORDER": "mistral"})
-    func = llm_mod.make_llm_func(cfg)
+    func = llm_mod.make_llm_func(cfg, cache_dir=_per_test_cache())
 
     _run(func("hi", extra_body={"unrelated": "value"}))
 
@@ -80,7 +91,7 @@ def test_provider_order_does_not_overwrite_caller_provider(
 ) -> None:
     """`setdefault` semantics: a caller's explicit `provider` wins."""
     cfg = ExtractionConfig.from_env({"EXTRACTION_PROVIDER_ORDER": "mistral"})
-    func = llm_mod.make_llm_func(cfg)
+    func = llm_mod.make_llm_func(cfg, cache_dir=_per_test_cache())
 
     _run(func("hi", extra_body={"provider": {"order": ["together"]}}))
 
@@ -92,7 +103,7 @@ def test_ranked_provider_order_passes_through(fake_api_key, captured_call) -> No
     cfg = ExtractionConfig.from_env(
         {"EXTRACTION_PROVIDER_ORDER": "mistral,together,openai"},
     )
-    func = llm_mod.make_llm_func(cfg)
+    func = llm_mod.make_llm_func(cfg, cache_dir=_per_test_cache())
 
     _run(func("hi"))
 
@@ -105,7 +116,7 @@ def test_temperature_still_defaulted_to_zero(fake_api_key, captured_call) -> Non
     """Provider routing must not break the existing temp=0 reproducibility
     contract."""
     cfg = ExtractionConfig.from_env({"EXTRACTION_PROVIDER_ORDER": "mistral"})
-    func = llm_mod.make_llm_func(cfg)
+    func = llm_mod.make_llm_func(cfg, cache_dir=_per_test_cache())
 
     _run(func("hi"))
 
@@ -116,7 +127,7 @@ def test_model_id_forwards_from_config(fake_api_key, captured_call) -> None:
     cfg = ExtractionConfig.from_env(
         {"EXTRACTION_LLM_MODEL": "mistralai/mistral-small-latest"},
     )
-    func = llm_mod.make_llm_func(cfg)
+    func = llm_mod.make_llm_func(cfg, cache_dir=_per_test_cache())
 
     _run(func("hi"))
 

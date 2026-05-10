@@ -38,7 +38,15 @@ async def build_rag(
     working_dir: Path = DEFAULT_WORKING_DIR,
     config: ExtractionConfig | None = None,
 ) -> LightRAG:
-    """Instantiate LightRAG with the project's LLM, embeddings, and taxonomy."""
+    """Instantiate LightRAG with the project's LLM, embeddings, and taxonomy.
+
+    Phase 8b.3: we disable LightRAG's built-in `kv_store_llm_response_cache.json`
+    via `enable_llm_cache=False` and route LLM calls through our own
+    fingerprint cache (`extraction.cache`). Single source of truth: ours
+    keys on (extractor_version, model_id, prompt, system_prompt, history)
+    instead of prompt content alone, which catches stale-cache hazards
+    on prompt edits + model swaps.
+    """
     config = config or ExtractionConfig.from_env()
     working_dir.mkdir(parents=True, exist_ok=True)
     rag = LightRAG(
@@ -47,6 +55,8 @@ async def build_rag(
         embedding_func=make_embedding_func(config),
         rerank_model_func=rerank_func,
         addon_params=config.addon_params(),
+        enable_llm_cache=False,
+        enable_llm_cache_for_entity_extract=False,
     )
     await rag.initialize_storages()
     return rag

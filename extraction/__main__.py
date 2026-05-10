@@ -253,6 +253,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_corpus.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
     p_corpus.add_argument("-v", "--verbose", action="store_true")
 
+    p_cache = sub.add_parser(
+        "cache",
+        help="Manage the fingerprint LLM cache (extraction_store/cache/)",
+    )
+    cache_sub = p_cache.add_subparsers(dest="cache_command", required=True)
+    p_cache_clear = cache_sub.add_parser(
+        "clear", help="Delete every cached LLM response (manual eviction)",
+    )
+    p_cache_clear.add_argument(
+        "--cache-dir", type=Path, default=Path("extraction_store") / "cache",
+        help="Cache directory (default: extraction_store/cache)",
+    )
+    p_cache_status = cache_sub.add_parser(
+        "status", help="Show count + size of the LLM cache",
+    )
+    p_cache_status.add_argument(
+        "--cache-dir", type=Path, default=Path("extraction_store") / "cache",
+        help="Cache directory (default: extraction_store/cache)",
+    )
+
     p_query = sub.add_parser("query", help="Query the extracted knowledge graph")
     p_query.add_argument("question", type=str, help="Natural-language question")
     p_query.add_argument(
@@ -811,7 +831,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
@@ -858,6 +878,22 @@ def main(argv: list[str] | None = None) -> int:
         ))
     if args.cmd == "diagnose-corpus":
         return asyncio.run(_run_diagnose_corpus(args.working_dir))
+    if args.cmd == "cache":
+        from extraction.cache import clear_cache as _clear_cache
+        if args.cache_command == "clear":
+            removed = _clear_cache(args.cache_dir)
+            print(f"Cache: removed {removed} file(s) from {args.cache_dir}")
+            return 0
+        if args.cache_command == "status":
+            from pathlib import Path as _P
+            d: _P = args.cache_dir
+            if not d.is_dir():
+                print(f"Cache dir does not exist: {d}")
+                return 0
+            files = list(d.glob("*.json"))
+            size = sum(f.stat().st_size for f in files)
+            print(f"Cache: {len(files)} file(s) | {size / 1024:.1f} KiB | {d}")
+            return 0
 
     parser.error(f"Unknown command: {args.cmd}")
     return 2
