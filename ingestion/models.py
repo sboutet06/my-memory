@@ -18,6 +18,10 @@ class IngestionStatus(StrEnum):
     DUPLICATE = "duplicate"
     FAILED = "failed"
     UNSUPPORTED = "unsupported"
+    # Re-ingest of the same source path with a new content_hash.
+    # Phase 8b.1: prior version archived under versions/<n>/, current
+    # pointer advanced.
+    UPDATED = "updated"
 
 
 class ExtractionQuality(StrEnum):

@@ -20,7 +20,13 @@ from ingestion.models import (
     IngestionStatus,
 )
 from ingestion.quality import assess_quality, render_fallback_markdown
-from ingestion.storage import find_duplicate, persist_document
+from ingestion.storage import (
+    archive_current_version,
+    find_duplicate,
+    find_existing_at_path,
+    persist_document,
+    read_current_version,
+)
 
 # Classifier is optional — fail soft if the LLM call errors (no API key,
 # network down). Ingestion stays local-first; classification improves
@@ -157,6 +163,13 @@ def ingest_document(
             message="Already ingested",
         )
 
+    # Phase 8b.1: re-ingest of the same source path with new content_hash =
+    # an UPDATE. Same document_id, prior artifacts archived under
+    # versions/<n>/, current pointer bumped.
+    resolved_path = str(file_path.resolve())
+    same_path_doc = find_existing_at_path(store_root, resolved_path)
+    is_update = same_path_doc is not None
+
     mime_type = detect_mime_type(file_path)
 
     try:
@@ -185,7 +198,26 @@ def ingest_document(
         extraction_quality=quality,
         document_date=document_date,
         doc_context=tags,
+        # On update, preserve the existing document_id so the version
+        # archive sits under one stable directory.
+        document_id=same_path_doc.document_id if is_update else None,
     )
+
+    if is_update:
+        # Archive current artifacts BEFORE writing v(n+1). If persist fails
+        # mid-write, the prior version is already at versions/<n>/ and the
+        # `current` pointer still says <n> (not yet bumped) — recoverable.
+        existing_version = read_current_version(store_root, same_path_doc.document_id)
+        try:
+            archive_current_version(
+                store_root, same_path_doc.document_id, existing_version,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to archive v%d of %s",
+                existing_version, same_path_doc.document_id,
+            )
+            return IngestionResult(status=IngestionStatus.FAILED, message=str(exc))
 
     try:
         storage_path = persist_document(
@@ -194,12 +226,28 @@ def ingest_document(
             docling_json=docling_json,
             docling_markdown=docling_md,
             source_path=file_path,
+            is_update=is_update,
         )
     except Exception as exc:
         logger.exception("Persistence failed for %s", file_path.name)
         return IngestionResult(status=IngestionStatus.FAILED, message=str(exc))
 
     _emit_source_corrections(corrections_root, metadata)
+
+    if is_update:
+        logger.info(
+            "Updated %s → %s (v%d, %d ms, %d bytes, quality=%s)",
+            file_path.name, metadata.document_id,
+            read_current_version(store_root, metadata.document_id),
+            duration_ms, metadata.size_bytes, quality.value,
+        )
+        return IngestionResult(
+            status=IngestionStatus.UPDATED,
+            document_id=metadata.document_id,
+            storage_path=storage_path,
+            content_hash=content_hash,
+            metadata=metadata,
+        )
 
     logger.info(
         "Ingested %s → %s (%d ms, %d bytes, quality=%s)",
