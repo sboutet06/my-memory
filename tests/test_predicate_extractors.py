@@ -16,11 +16,15 @@ from facts.models import ConfidenceLevel
 from packs.personal_documents.predicate_extractors import (
     extract_address_facts,
     extract_birthdate_facts,
+    extract_diagnosis_facts,
     extract_employer_facts,
+    extract_prescribed_medication_facts,
     parse_llm_json,
     should_run_address_for,
     should_run_birthdate_for,
+    should_run_diagnosis_for,
     should_run_employer_for,
+    should_run_medication_for,
     validate_address,
     validate_birthdate,
     validate_employer_name,
@@ -327,3 +331,88 @@ def test_employer_extractor_drops_missing_employee() -> None:
         content_md="x", source_doc_id="d", llm_func=_stub_llm(response),
     ))
     assert result.facts == []
+
+
+# ============================================================================
+# Medical scaffold (8b.5b)
+# ============================================================================
+
+
+def test_diagnosis_trigger_matches_healthcare() -> None:
+    assert should_run_diagnosis_for({"doc_context": ["healthcare"]})
+
+
+def test_medication_trigger_matches_healthcare() -> None:
+    assert should_run_medication_for({"doc_context": ["healthcare"]})
+
+
+def test_diagnosis_extractor_emits_fact() -> None:
+    response = (
+        '[{"patient_name":"Kévin","diagnosis":"Traumatisme médullaire incomplet",'
+        '"certainty":"confirmed"}]'
+    )
+    result = _run(extract_diagnosis_facts(
+        content_md="x", source_doc_id="doc-1", llm_func=_stub_llm(response),
+    ))
+    assert len(result.facts) == 1
+    f = result.facts[0]
+    assert f.predicate == "diagnosis"
+    # Always llm_low until V1 adds ontology validation.
+    assert f.confidence == ConfidenceLevel.LLM_LOW
+    # Subject scoped by source_doc_id so the same anonymous "patient"
+    # in different cases is not collapsed.
+    assert "doc-1" in f.subject_id
+
+
+def test_diagnosis_extractor_multiple() -> None:
+    response = (
+        '[{"patient_name":"A","diagnosis":"d1","certainty":"confirmed"},'
+        '{"patient_name":"A","diagnosis":"d2","certainty":"differential"}]'
+    )
+    result = _run(extract_diagnosis_facts(
+        content_md="x", source_doc_id="d", llm_func=_stub_llm(response),
+    ))
+    assert len(result.facts) == 2
+
+
+def test_diagnosis_extractor_drops_empty() -> None:
+    response = '[{"patient_name":"","diagnosis":"d"}]'
+    result = _run(extract_diagnosis_facts(
+        content_md="x", source_doc_id="d", llm_func=_stub_llm(response),
+    ))
+    assert result.facts == []
+
+
+def test_medication_extractor_emits_fact() -> None:
+    response = (
+        '[{"patient_name":"Alice","medication":"paracétamol",'
+        '"dose":"1 g","indication":"douleur"}]'
+    )
+    result = _run(extract_prescribed_medication_facts(
+        content_md="x", source_doc_id="d", llm_func=_stub_llm(response),
+    ))
+    assert len(result.facts) == 1
+    f = result.facts[0]
+    assert f.predicate == "prescribed_medication"
+    assert f.canonical_value == "paracétamol"
+    assert f.confidence == ConfidenceLevel.LLM_LOW
+
+
+def test_medication_extractor_drops_empty_medication() -> None:
+    response = '[{"patient_name":"A","medication":""}]'
+    result = _run(extract_prescribed_medication_facts(
+        content_md="x", source_doc_id="d", llm_func=_stub_llm(response),
+    ))
+    assert result.facts == []
+
+
+def test_medical_subject_scoped_by_doc() -> None:
+    """Same anonymous "patient" in different docs must NOT collapse."""
+    response = '[{"patient_name":"patient","diagnosis":"d"}]'
+    r1 = _run(extract_diagnosis_facts(
+        content_md="x", source_doc_id="doc-A", llm_func=_stub_llm(response),
+    ))
+    r2 = _run(extract_diagnosis_facts(
+        content_md="x", source_doc_id="doc-B", llm_func=_stub_llm(response),
+    ))
+    assert r1.facts[0].subject_id != r2.facts[0].subject_id

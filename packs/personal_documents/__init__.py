@@ -29,10 +29,14 @@ from packs.personal_documents.injector import (
 from packs.personal_documents.predicate_extractors import (
     extract_address_facts as _extract_address_facts,
     extract_birthdate_facts as _extract_birthdate_facts,
+    extract_diagnosis_facts as _extract_diagnosis_facts,
     extract_employer_facts as _extract_employer_facts,
+    extract_prescribed_medication_facts as _extract_prescribed_medication_facts,
     should_run_address_for as _should_run_address_for,
     should_run_birthdate_for as _should_run_birthdate_for,
+    should_run_diagnosis_for as _should_run_diagnosis_for,
     should_run_employer_for as _should_run_employer_for,
+    should_run_medication_for as _should_run_medication_for,
 )
 from packs.personal_documents.router import (
     detect_doc_kind,
@@ -114,6 +118,14 @@ class _PersonalDocumentsPack:
                   description="passport document number; invariant per issuance"),
         Predicate(name="social_security_id", time_varying=False, allow_multi=False,
                   description="national social security / NIR number; invariant"),
+        # Phase 8b.5b — medical scaffold. Multi-valued per patient case
+        # (a single clinical case routinely lists several diagnoses /
+        # medications). time_varying defaults to False here because
+        # within ONE source doc the data is a snapshot.
+        Predicate(name="diagnosis", time_varying=False, allow_multi=True,
+                  description="clinical diagnosis stated in the source document"),
+        Predicate(name="prescribed_medication", time_varying=False, allow_multi=True,
+                  description="medication prescribed in the source document"),
     )
 
     def matches(self, metadata: dict, content_md: str) -> bool:
@@ -177,7 +189,9 @@ class _PersonalDocumentsPack:
         content_md: str,
         llm_func,
         facts_store: FactStore,
-        predicates: tuple[str, ...] = ("address", "birthdate", "employer"),
+        predicates: tuple[str, ...] = (
+            "address", "birthdate", "employer", "diagnosis", "prescribed_medication",
+        ),
     ) -> FactResult:
         """Phase 8b.5 — invoke LLM predicate extractors for this doc.
 
@@ -218,6 +232,22 @@ class _PersonalDocumentsPack:
 
         if "employer" in wanted and _should_run_employer_for(metadata):
             res = await _extract_employer_facts(
+                content_md=content_md, source_doc_id=doc_id,
+                llm_func=llm_func, document_date=doc_date,
+            )
+            combined.facts.extend(res.facts)
+            combined.claims.extend(res.claims)
+
+        if "diagnosis" in wanted and _should_run_diagnosis_for(metadata):
+            res = await _extract_diagnosis_facts(
+                content_md=content_md, source_doc_id=doc_id,
+                llm_func=llm_func, document_date=doc_date,
+            )
+            combined.facts.extend(res.facts)
+            combined.claims.extend(res.claims)
+
+        if "prescribed_medication" in wanted and _should_run_medication_for(metadata):
+            res = await _extract_prescribed_medication_facts(
                 content_md=content_md, source_doc_id=doc_id,
                 llm_func=llm_func, document_date=doc_date,
             )

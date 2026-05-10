@@ -90,6 +90,13 @@ _EMPLOYER_TRIGGER_TAGS = frozenset({
     "cv", "attestation_emploi",
 })
 
+# Phase 8b.5b — medical scaffold. Triggers ONLY on healthcare-tagged docs
+# to avoid noise on non-medical content. The raw-medical/ corpus is
+# classified `healthcare` by the LLM classifier (smoke test confirmed
+# 2026-05-10), so every clinical case file flows in.
+_DIAGNOSIS_TRIGGER_TAGS = frozenset({"healthcare", "medical_record"})
+_MEDICATION_TRIGGER_TAGS = frozenset({"healthcare", "medical_record", "prescription"})
+
 
 def should_run_address_for(metadata: dict) -> bool:
     tags = set(metadata.get("doc_context") or [])
@@ -104,6 +111,16 @@ def should_run_birthdate_for(metadata: dict) -> bool:
 def should_run_employer_for(metadata: dict) -> bool:
     tags = set(metadata.get("doc_context") or [])
     return bool(tags & _EMPLOYER_TRIGGER_TAGS)
+
+
+def should_run_diagnosis_for(metadata: dict) -> bool:
+    tags = set(metadata.get("doc_context") or [])
+    return bool(tags & _DIAGNOSIS_TRIGGER_TAGS)
+
+
+def should_run_medication_for(metadata: dict) -> bool:
+    tags = set(metadata.get("doc_context") or [])
+    return bool(tags & _MEDICATION_TRIGGER_TAGS)
 
 
 # ============================================================================
@@ -262,6 +279,46 @@ Document:
 """
 
 
+# Phase 8b.5b — medical predicate scaffold.
+_DIAGNOSIS_PROMPT = """Extract every diagnosis explicitly stated for a patient in the document.
+
+Output STRICT JSON only — a top-level array.
+Each item:
+{
+  "patient_name": "<name or 'patient' if anonymous>",
+  "diagnosis": "<short clinical diagnosis>",
+  "certainty": "confirmed" | "suspected" | "differential" | "ruled_out"
+}
+
+If no diagnosis is mentioned, output exactly: []
+
+Document:
+---
+{doc_text}
+---
+"""
+
+
+_MEDICATION_PROMPT = """Extract every medication prescribed in the document with the patient it concerns.
+
+Output STRICT JSON only — a top-level array.
+Each item:
+{
+  "patient_name": "<name or 'patient' if anonymous>",
+  "medication": "<drug name (DCI preferred over commercial name)>",
+  "dose": "<dose with units or null>",
+  "indication": "<medical indication or null>"
+}
+
+If no medication is prescribed, output exactly: []
+
+Document:
+---
+{doc_text}
+---
+"""
+
+
 # ============================================================================
 # Extractors
 # ============================================================================
@@ -379,6 +436,99 @@ async def extract_birthdate_facts(
             valid_to=None,
             confidence=confidence,
             source_location=f"birthdate:{idx}",
+        )
+        facts.append(fact)
+        claims.append(claim)
+
+    return FactResult(facts=facts, claims=claims)
+
+
+async def extract_diagnosis_facts(
+    *,
+    content_md: str,
+    source_doc_id: str,
+    llm_func: LLMFunc,
+    document_date: Optional[date] = None,
+) -> FactResult:
+    raw = await llm_func(_DIAGNOSIS_PROMPT.replace("{doc_text}", content_md or ""))
+    items = parse_llm_json(raw)
+
+    facts: list[Fact] = []
+    claims: list[Claim] = []
+    for idx, item in enumerate(items):
+        patient_name = (item.get("patient_name") or "").strip()
+        diagnosis = (item.get("diagnosis") or "").strip()
+        if not patient_name or not diagnosis:
+            continue
+
+        # Always llm_low for v0.5 — no ICD/CIM-10 mapping yet. A V1
+        # post-validator against an ontology would promote to llm_high.
+        confidence = ConfidenceLevel.LLM_LOW
+        canonical = diagnosis.lower().strip()
+
+        # Per-case subject: scope patient identity by source_doc_id so
+        # "patient" in different clinical cases doesn't collapse onto one
+        # person.
+        subject = _subject_id(f"{patient_name} {source_doc_id}")
+
+        fact, claim = _make_fact_and_claim(
+            subject_id=subject,
+            predicate="diagnosis",
+            canonical_value=canonical,
+            value={
+                "patient_name": patient_name,
+                "diagnosis": diagnosis,
+                "certainty": item.get("certainty"),
+            },
+            source_doc_id=source_doc_id,
+            valid_from=document_date,
+            valid_to=None,
+            confidence=confidence,
+            source_location=f"diagnosis:{idx}",
+        )
+        facts.append(fact)
+        claims.append(claim)
+
+    return FactResult(facts=facts, claims=claims)
+
+
+async def extract_prescribed_medication_facts(
+    *,
+    content_md: str,
+    source_doc_id: str,
+    llm_func: LLMFunc,
+    document_date: Optional[date] = None,
+) -> FactResult:
+    raw = await llm_func(_MEDICATION_PROMPT.replace("{doc_text}", content_md or ""))
+    items = parse_llm_json(raw)
+
+    facts: list[Fact] = []
+    claims: list[Claim] = []
+    for idx, item in enumerate(items):
+        patient_name = (item.get("patient_name") or "").strip()
+        medication = (item.get("medication") or "").strip()
+        if not patient_name or not medication:
+            continue
+
+        confidence = ConfidenceLevel.LLM_LOW  # see diagnosis rationale
+        canonical = medication.lower().strip()
+        subject = _subject_id(f"{patient_name} {source_doc_id}")
+
+        fact, claim = _make_fact_and_claim(
+            subject_id=subject,
+            predicate="prescribed_medication",
+            canonical_value=canonical,
+            value={
+                "patient_name": patient_name,
+                "medication": medication,
+                "dose": item.get("dose"),
+                "indication": item.get("indication"),
+            },
+            source_doc_id=source_doc_id,
+            valid_from=document_date,
+            valid_to=None,
+            confidence=confidence,
+            source_location=f"medication:{idx}",
         )
         facts.append(fact)
         claims.append(claim)
