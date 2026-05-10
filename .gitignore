@@ -1,8 +1,10 @@
 # Personal data — never commit
 raw/
 raw-*/
-# Synthetic test corpus is NOT personal data — committed
+# Public-domain / synthetic corpora — committed (no PII)
 !raw-synthetic/
+!raw-ocr/
+!raw-medical/
 store/
 
 # Secrets
