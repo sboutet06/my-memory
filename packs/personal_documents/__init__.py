@@ -15,6 +15,8 @@ from typing import Optional
 
 import logging
 
+from datetime import date
+
 from facts.models import FactResult, Predicate
 from facts.store import DuplicateIDError, FactStore
 from packs.personal_documents.focus import extraction_hints as _extraction_hints
@@ -23,6 +25,14 @@ from packs.personal_documents.injector import (
     inject_structured as _inject_structured,
     plan_transaction_facts as _plan_transaction_facts,
     summary_extras_for_doc as _summary_extras_for_doc,
+)
+from packs.personal_documents.predicate_extractors import (
+    extract_address_facts as _extract_address_facts,
+    extract_birthdate_facts as _extract_birthdate_facts,
+    extract_employer_facts as _extract_employer_facts,
+    should_run_address_for as _should_run_address_for,
+    should_run_birthdate_for as _should_run_birthdate_for,
+    should_run_employer_for as _should_run_employer_for,
 )
 from packs.personal_documents.router import (
     detect_doc_kind,
@@ -159,6 +169,73 @@ class _PersonalDocumentsPack:
                 _logger.debug("claim %s already in store, skipping", claim.id)
 
         return fact_result
+
+    async def run_predicate_extractors(
+        self,
+        *,
+        metadata: dict,
+        content_md: str,
+        llm_func,
+        facts_store: FactStore,
+        predicates: tuple[str, ...] = ("address", "birthdate", "employer"),
+    ) -> FactResult:
+        """Phase 8b.5 — invoke LLM predicate extractors for this doc.
+
+        Each predicate has its own trigger set (see
+        `predicate_extractors.should_run_*_for`). The caller passes
+        `llm_func` (typically `extraction.llm.make_llm_func(config)`) so
+        the 8b.3 fingerprint cache wraps every LLM call.
+
+        Facts + Claims are appended to `facts_store`; DuplicateIDError
+        (idempotent re-runs) is swallowed.
+        """
+        doc_id = metadata["document_id"]
+        raw_doc_date = metadata.get("document_date")
+        doc_date: Optional[date] = None
+        if raw_doc_date:
+            try:
+                doc_date = date.fromisoformat(raw_doc_date)
+            except (TypeError, ValueError):
+                doc_date = None
+
+        combined = FactResult()
+        wanted = set(predicates)
+
+        if "address" in wanted and _should_run_address_for(metadata):
+            res = await _extract_address_facts(
+                content_md=content_md, source_doc_id=doc_id,
+                llm_func=llm_func, document_date=doc_date,
+            )
+            combined.facts.extend(res.facts)
+            combined.claims.extend(res.claims)
+
+        if "birthdate" in wanted and _should_run_birthdate_for(metadata):
+            res = await _extract_birthdate_facts(
+                content_md=content_md, source_doc_id=doc_id, llm_func=llm_func,
+            )
+            combined.facts.extend(res.facts)
+            combined.claims.extend(res.claims)
+
+        if "employer" in wanted and _should_run_employer_for(metadata):
+            res = await _extract_employer_facts(
+                content_md=content_md, source_doc_id=doc_id,
+                llm_func=llm_func, document_date=doc_date,
+            )
+            combined.facts.extend(res.facts)
+            combined.claims.extend(res.claims)
+
+        for fact in combined.facts:
+            try:
+                facts_store.append_fact(fact)
+            except DuplicateIDError:
+                _logger.debug("fact %s already in store, skipping", fact.id)
+        for claim in combined.claims:
+            try:
+                facts_store.append_claim(claim)
+            except DuplicateIDError:
+                _logger.debug("claim %s already in store, skipping", claim.id)
+
+        return combined
 
     def extraction_hints(self, metadata: dict) -> list[str]:
         """Focus entity types for this doc based on its `doc_context` tags.

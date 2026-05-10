@@ -178,6 +178,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_struct.add_argument("-v", "--verbose", action="store_true")
 
+    p_predicates = sub.add_parser(
+        "extract-predicates",
+        help="Run LLM-based predicate extractors (address/birthdate/employer) "
+             "over every doc whose tags fit the trigger set; emit Facts + Claims",
+    )
+    p_predicates.add_argument("--store", type=Path, default=Path("store"))
+    p_predicates.add_argument("--working-dir", type=Path, default=DEFAULT_WORKING_DIR)
+    p_predicates.add_argument(
+        "--predicates", type=str, default="address,birthdate,employer",
+        help="Comma-separated subset to run (default: all three)",
+    )
+    p_predicates.add_argument(
+        "--dry-run", action="store_true",
+        help="Print planned Fact count per doc without writing the facts store",
+    )
+    p_predicates.add_argument("-v", "--verbose", action="store_true")
+
     p_apply = sub.add_parser(
         "apply-corrections",
         help="Execute user-reviewed derivation corrections against the graph",
@@ -515,6 +532,85 @@ async def _run_extract_structured(store_root: Path, working_dir: Path,
         report["mutations"] = mutations
         report["facts_injected"] = facts_store.fact_count
 
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+async def _run_extract_predicates(
+    store_root: Path,
+    working_dir: Path,
+    predicates: tuple[str, ...],
+    dry_run: bool,
+) -> int:
+    """Phase 8b.5 — invoke pack predicate extractors and persist Facts."""
+    load_dotenv(Path.cwd() / ".env")
+    config = ExtractionConfig.from_env()
+    config.require_api_key()
+
+    packs = _load_packs(None, no_packs=False)
+    if not packs:
+        print("No packs active — nothing to do.", file=sys.stderr)
+        return 1
+
+    docs = discover_store_docs(store_root)
+    if not docs:
+        print(f"No ingested docs under {store_root}.", file=sys.stderr)
+        return 1
+
+    from corrections.io import load_source_correction
+    from corrections.overlay import resolve_content
+    from facts.store import FactStore
+    from extraction.llm import make_llm_func
+
+    facts_store_root = Path(__file__).parent.parent / "facts" / "store"
+    facts_store = FactStore(facts_store_root)
+    corrections_root = _resolve_corrections_root(None, store_root)
+    llm_func = make_llm_func(config)
+
+    initial_count = facts_store.fact_count
+    per_doc: list[dict] = []
+    for md_path, meta in docs:
+        raw = md_path.read_text(encoding="utf-8")
+        correction = load_source_correction(corrections_root, meta["document_id"])
+        content = resolve_content(raw, correction, corrections_root)
+
+        doc_facts = 0
+        doc_claims = 0
+        for pack in packs:
+            runner = getattr(pack, "run_predicate_extractors", None)
+            if not callable(runner):
+                continue
+            if dry_run:
+                # Build an isolated, throwaway store for dry-run accounting.
+                from tempfile import mkdtemp
+                tmp = FactStore(Path(mkdtemp(prefix="dry-facts-")))
+                fr = await runner(
+                    metadata=meta, content_md=content, llm_func=llm_func,
+                    facts_store=tmp, predicates=predicates,
+                )
+            else:
+                fr = await runner(
+                    metadata=meta, content_md=content, llm_func=llm_func,
+                    facts_store=facts_store, predicates=predicates,
+                )
+            doc_facts += len(fr.facts)
+            doc_claims += len(fr.claims)
+
+        if doc_facts:
+            per_doc.append({
+                "document_id": meta["document_id"],
+                "facts": doc_facts, "claims": doc_claims,
+            })
+
+    report = {
+        "docs_scanned": len(docs),
+        "docs_with_facts": len(per_doc),
+        "predicates": list(predicates),
+        "dry_run": dry_run,
+        "facts_total_before": initial_count,
+        "facts_total_after": facts_store.fact_count if not dry_run else initial_count,
+        "per_doc": per_doc,
+    }
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
@@ -878,6 +974,11 @@ def main(argv: list[str] | None = None) -> int:
         ))
     if args.cmd == "diagnose-corpus":
         return asyncio.run(_run_diagnose_corpus(args.working_dir))
+    if args.cmd == "extract-predicates":
+        predicates = tuple(p.strip() for p in args.predicates.split(",") if p.strip())
+        return asyncio.run(_run_extract_predicates(
+            args.store, args.working_dir, predicates, args.dry_run,
+        ))
     if args.cmd == "cache":
         from extraction.cache import clear_cache as _clear_cache
         if args.cache_command == "clear":
