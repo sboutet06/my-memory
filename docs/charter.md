@@ -470,15 +470,20 @@ Engineering rules:
    table without appearing in the benchmark.
 6. **≥ 2 viable choices per stage before V1 ships.** If only one model
    meets the capability bar, the stage is a lock-in risk and is flagged.
-7. **Local-LLM swap is a v0.5 deliverable, not deferred** (decided
-   2026-05-10 premortem). At least ONE local model wired through
-   `extraction/config.py` and runnable on the dev machine before V1
-   pilot. Without this, the announced FR legal/medical market is
-   inaccessible (RGPD + DPA blocks any extraction stage routing data to
-   US-hosted LLMs). Concrete target: Ollama or MLX hosting of
-   `qwen2.5:7b` (or successor) for the extraction stage; metric =
-   `fact_coverage` no worse than -0.05 vs Gemini 2.5 Flash on the eval
-   suite. Was §7.6 deferred — promoted.
+7. **Sovereign-routable LLM swap is a v0.5 deliverable, not deferred**
+   (decided 2026-05-10 premortem; revised 2026-05-10 after laptop-power
+   reality-check). At least ONE non-US-hosted model wired through
+   `extraction/config.py` and runnable before V1 pilot. Without this,
+   the announced FR legal/medical market is inaccessible (RGPD + DPA
+   blocks any extraction stage routing data to US-hosted LLMs).
+   Concrete v0.5 target: **Mistral Small Latest** via OpenRouter with
+   `provider.order=["mistral"]` pinning, so data stays in France
+   (Mistral SA, Paris). Same OpenAI-compatible API as current Gemini
+   routing — no new dependency, no new infrastructure. Metric =
+   `fact_coverage` not worse than -0.05 vs Gemini 2.5 Flash on a
+   3-case smoke benchmark. True local inference (Ollama / MLX with
+   Qwen 2.5 or Mistral weights) is promoted to V1 work and only
+   triggered when a customer demands offline operation.
 
 ### 3.8b Extraction cache and idempotence (v0.5)
 
@@ -991,9 +996,14 @@ them.
   `deterministic | llm_high | llm_low`. Honest by construction; float
   would require a calibration set we do not have. See §3.2 + §3.8c +
   Phase 8b.2.
-- **D10. Local LLM in v0.5, not deferred** (supersedes §7.6 entry): one
-  local model wired through `extraction/config.py`. See §3.8 rule 7 +
-  Phase 8b.4.
+- **D10. Sovereign-routable LLM in v0.5, not deferred**
+  (supersedes §7.6 entry; revised 2026-05-10 after user's laptop
+  reality-check ruled out local inference): one non-US-hosted model
+  wired through `extraction/config.py`. v0.5 target = Mistral Small
+  Latest via OpenRouter with `provider.order=["mistral"]` pinning
+  (data stays in Paris). True local inference (Ollama/MLX) promoted
+  to V1 when a customer asks for offline operation. See §3.8 rule 7
+  + Phase 8b.4.
 - **D11. End-to-end OCR stress in v0.5 corpus**: user requested
   exercising the full chain including OCR. Add representative scanned /
   degraded documents to the corpus (notarial / legal / medical / old

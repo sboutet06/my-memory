@@ -127,7 +127,7 @@ drifts.
 | **D7** (admin conflicts GUI) | **In V1.** Read-only dashboard, one-click resolve, emits YAML. SMB market inaccessible without it. Phase 9.7. |
 | **D8** (MCP before FastAPI) | **Yes.** Phase 10 = MCP, Phase 11 = FastAPI. Built for `orchestrator` (concrete consumer), not hypothetical HTTP one. |
 | **D9** (confidence categorical) | **Categorical enum** `deterministic \| llm_high \| llm_low`. Float dropped — un-calibrated float = theatre. Phase 8b.2. |
-| **D10** (local LLM in v0.5) | One local model wired through `extraction/config.py` (extraction stage). Without it FR legal/medical pilot inaccessible. Phase 8b.4. |
+| **D10** (sovereign-routable LLM in v0.5) | Mistral Small Latest via OpenRouter with `provider.order=["mistral"]` pinning (Paris-hosted). True local Ollama/MLX promoted to V1. Phase 8b.4. |
 | **D11** (OCR stress in corpus) | User wants full chain exercised including OCR. Add representative scanned docs in v0.5. Phase 8b corpus subtask. |
 
 **Pending user input** — STOP and ask before crossing the relevant gate:
@@ -782,21 +782,27 @@ Without 8b, v0.5 cannot be claimed.
   - Commits: `feat(extraction): version-keyed extraction cache`,
     `test(extraction): cache idempotence and busting`.
 
-- [ ] **8b.4 Local LLM swap**
-  - **ASK USER** before installing Ollama / MLX dependencies. Present
-    license, install size, model weights size on disk.
-  - Wire one local model — proposal: `qwen2.5:7b-instruct` via Ollama
-    over the OpenAI-compatible HTTP API. Lives behind the same
-    `extraction/config.py` interface; toggled by env var
-    `MY_MEMORY_LLM_PROVIDER=ollama|openrouter`.
-  - Smoke benchmark: `python -m benchmarks.runner --stage extraction
-    --model qwen2.5:7b --case-limit 3`. Pass: `fact_coverage` not worse
-    than -0.05 vs Gemini Flash on the 3 cases.
-  - Document in `benchmarks/README.md` under "Local providers".
-  - Tests: extraction stage routes to Ollama when env set; falls back
-    to OpenRouter when env unset; budget cap respected.
-  - Commits: `feat(extraction): Ollama local LLM provider`,
-    `test(benchmarks): local LLM smoke comparison`.
+- [ ] **8b.4 Sovereign-routable LLM swap** (revised 2026-05-10: laptop
+    too weak for local inference, pivoted to OpenRouter + EU provider
+    pinning)
+  - Wire **Mistral Small Latest** via OpenRouter through
+    `extraction/config.py`. Pin provider via OpenRouter
+    `provider.order=["mistral"]` so data stays in Paris.
+  - No new Python dependency: same OpenAI-compatible client as the
+    current Gemini routing.
+  - Switch via env var `EXTRACTION_LLM_MODEL=mistralai/mistral-small-latest`
+    (and optional `EXTRACTION_PROVIDER_ORDER=mistral`).
+  - Smoke benchmark: `python -m benchmarks.runner --stage query_answerer
+    --model mistralai/mistral-small-latest --case-limit 3`. Pass:
+    `fact_coverage` not worse than -0.05 vs Gemini Flash on the 3 cases.
+  - Document the routing + EU-pinning rationale in
+    `benchmarks/README.md` under "Sovereign providers".
+  - Tests: provider routing is plumbed into the OpenRouter request body;
+    env var toggles model; runner accepts the new model id.
+  - Commits: `feat(extraction): Mistral via OpenRouter with EU pinning`,
+    `test(benchmarks): Mistral smoke vs Gemini Flash`.
+  - V1 follow-up: true local Ollama / MLX inference (Qwen 2.5 7B or
+    similar) when a pilot demands offline operation.
 
 - [ ] **8b.5 Non-bank Fact extractors (S7)**
   - In `packs/personal_documents`, add three new Fact-emitting
