@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from facts.detector import detect_all_conflicts
 from facts.predicates import PredicateRegistry
+from facts.replacement import apply_replacements
 from facts.store import FactStore
 from facts.supersession import run_supersession
 from packs import discover_packs
@@ -41,15 +42,35 @@ def cmd_supersede() -> None:
     print(f"Supersession: closed valid_to on {changed} fact(s).")
 
 
+def cmd_apply_replacements() -> None:
+    load_dotenv(Path.cwd() / ".env")
+    store, pred_registry = _build_registry()
+    report = apply_replacements(
+        store,
+        corrections_root=Path.cwd() / "corrections",
+        store_root=Path.cwd() / "store",
+        registry=pred_registry,
+    )
+    print(
+        f"Replacements: {report.facts_updated} fact(s) updated, "
+        f"{report.conflicts_resolved} conflict(s) resolved."
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     args = argv if argv is not None else sys.argv[1:]
     if not args or args[0] == "detect-conflicts":
         cmd_detect_conflicts()
     elif args[0] == "supersede":
         cmd_supersede()
+    elif args[0] == "apply-replacements":
+        cmd_apply_replacements()
     else:
         print(f"Unknown command: {args[0]}", file=sys.stderr)
-        print("Usage: python -m facts [detect-conflicts|supersede]", file=sys.stderr)
+        print(
+            "Usage: python -m facts [detect-conflicts|supersede|apply-replacements]",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
