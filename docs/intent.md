@@ -1253,3 +1253,120 @@ categorical) → 675 (8b.6 abstention). All green throughout.
   `conflict_detection_coverage` figures (currently theory only on
   synthetic data without non-bank Fact extractors).
 
+### Continued autonomous work — same 2026-05-10 session
+
+User answered the three follow-up questions (Mistral Small Latest, EU
+provider pinning instead of local Ollama, address regex permissive EU,
+§3.8 r7 reword OK) and told the agent to "vas-y" autonomously. Six
+sub-tasks landed in a single sweep:
+
+**Phase 8b.4 — sovereign-routable LLM** (`feat(extraction): Mistral
+via OpenRouter with EU pinning`):
+- `ExtractionConfig.provider_order: tuple[str, ...]` env-overridable
+  via `EXTRACTION_PROVIDER_ORDER`.
+- `make_llm_func` injects `extra_body.provider.order` into every
+  OpenAI-compatible request when non-empty; setdefault semantics so
+  per-call callers can override.
+- Charter §3.8 r7 reworded "local LLM swap" → "sovereign-routable
+  LLM swap". §7.7 D10 + tasks decision row aligned. Local Ollama/MLX
+  promoted to V1 work.
+- benchmarks/README.md gains the "Sovereign providers" section and
+  the Mistral smoke recipe.
+- 7 tests (default empty, single, ranked, whitespace, extra_body
+  merge, caller-wins, model id forwarding).
+
+**Phase 8b.3 — fingerprint LLM cache** (`feat(extraction):
+fingerprint LLM cache + LightRAG cache disabled`):
+- `extraction/cache.py` — `cached_completion()` keyed on SHA-256 of
+  (extractor_version, model_id, prompt, system_prompt, history).
+  JSON-file-per-key under `extraction_store/cache/`. Atomic
+  .tmp+rename writes.
+- LightRAG internal cache disabled (`enable_llm_cache=False`,
+  `enable_llm_cache_for_entity_extract=False`) for single source of
+  truth.
+- `python -m extraction cache status|clear` CLI. Eviction is manual.
+- 14 tests (fingerprint determinism + bust per dimension, hit/miss,
+  on-disk format, corrupt cache fallback, clear).
+
+**Phase 8b.5 — non-bank Fact extractors** (`feat(pack): address /
+birthdate / employer Fact extractors`):
+- New `packs/personal_documents/predicate_extractors.py` —
+  `extract_{address,birthdate,employer}_facts()` async functions.
+  Each: build LLM prompt → parse JSON tolerantly (fence-stripping +
+  filter non-dict) → post-validate via regex → emit
+  `Fact + Claim` with confidence = LLM_HIGH (pass) or LLM_LOW (fail).
+- Trigger sets per predicate (doc_context tag intersection).
+- Subject identity = `entity:<slug>` (NFKD-fold + alnum-only), so
+  `« Jean-Pierre Dupont »` and `"jean pierre dupont"` resolve to one
+  subject. Real graph lookup is Phase 9 cleanup.
+- Pack protocol gains `run_predicate_extractors()` async method;
+  CLI `python -m extraction extract-predicates` iterates docs.
+- 36 tests (triggers + validators + JSON-parsing tolerance + happy
+  / sad paths per predicate + idempotent ids + doc-date fallback).
+
+**Phase 8b.5b — medical predicate scaffold** (`feat(pack): medical
+predicate scaffold`):
+- Two extra predicates registered: `diagnosis` (allow_multi=True)
+  and `prescribed_medication` (allow_multi=True). Both
+  time_varying=False.
+- Triggers on `healthcare` / `medical_record` / `prescription`
+  doc_context tags. raw-medical/ corpus is already classified
+  `healthcare` so it flows in.
+- Always LLM_LOW for v0.5 (no ICD-10 / CIM-10 / ATC ontology
+  post-validator yet — V1 work).
+- Patient identity scoped per source_doc_id so anonymous "patient"
+  in two clinical files do not collapse.
+- 8 new tests.
+
+**Phase 8b.7 — phase-gate v0.5** (`feat(scripts): phase-gate-v0.5
+orchestrator + threshold asserter`):
+- `scripts/phase-gate-v0.5.sh` — bash orchestrator running the full
+  pipeline (ingest → extract → extract-structured →
+  extract-predicates → detect-conflicts → apply-replacements →
+  supersede → eval × 3 → assert).
+- `scripts/phase_gate_assert.py` — pure-Python threshold checker
+  reading the eval --json payload. Classifies each case into
+  fact-level / adversarial / phase8 / phase8b6 / baseline based on
+  tags and verifies the v0.5 per-bucket floors. Exits non-zero on
+  any regression.
+- 6 tests (happy path + threshold violation + baseline regression
+  + aggregated-runs shape + malformed payload + skip-when-empty).
+
+### Closing snapshot
+
+Test count progression in this session: 640 → 658 → 666 → 667 → 675 →
+686 → 700 → 736 → 744 → 750.
+
+Phase 8b status table:
+
+| Sub-task | Status |
+|---|---|
+| 8b.1 close 8.2 + 8.3 | ✅ done |
+| 8b.2 categorical confidence | ✅ done |
+| 8b.3 extract caching | ✅ done |
+| 8b.4 sovereign-routable LLM | ✅ done (Mistral via OpenRouter) |
+| 8b.5 non-bank Fact extractors | ✅ done |
+| 8b.5b medical predicate scaffold | ✅ done |
+| 8b.6 abstention | ✅ done |
+| 8b.7 phase gate v0.5 | ✅ script + tests done; user-triggered run pending |
+
+v0.5 is structurally complete. Remaining work is the LIVE run
+(`bash scripts/phase-gate-v0.5.sh`) which costs ~$1-2 on first
+invocation and surfaces real metric numbers — currently we only have
+green unit tests + mocked LLM contracts; the real differentiators
+(conflict_detection, temporal_accuracy, abstention_accuracy) have
+not yet been measured against the full corpus with real LLM
+extraction.
+
+### Next steps
+
+1. User runs `bash scripts/phase-gate-v0.5.sh` (or runs each step
+   manually + inspects intermediate JSON) and surfaces back any
+   threshold failures.
+2. If thresholds met → declare v0.5, tag the repo, move to V1
+   (Phase 9 cleanup: Profile fragmentation, LightRAG wrapper
+   abstraction, 25-30 case eval, CI gate, GUI conflicts dashboard).
+3. If thresholds fail → diagnose case-by-case. Each bucket has
+   per-case JSON in the eval output for surgical fixes (prompt
+   tuning, regex broadening, predicate ontology refinement).
+

@@ -765,7 +765,7 @@ Without 8b, v0.5 cannot be claimed.
   - Commits: `feat(facts): categorical ConfidenceLevel`,
     `chore(facts): migrate existing claims to categorical`.
 
-- [ ] **8b.3 Extract caching keyed on full fingerprint**
+- [x] **8b.3 Extract caching keyed on full fingerprint** (done 2026-05-10)
   - New module `extraction/cache.py`. Cache key =
     SHA-256(`doc_hash | extractor_version | model_id | prompt_hash`).
   - Storage: `extraction_store/cache/<key>.json` — extraction output
@@ -782,7 +782,7 @@ Without 8b, v0.5 cannot be claimed.
   - Commits: `feat(extraction): version-keyed extraction cache`,
     `test(extraction): cache idempotence and busting`.
 
-- [ ] **8b.4 Sovereign-routable LLM swap** (revised 2026-05-10: laptop
+- [x] **8b.4 Sovereign-routable LLM swap** (done 2026-05-10 — Mistral via OpenRouter, provider pinning; smoke benchmark deferred to phase gate run) (revised 2026-05-10: laptop
     too weak for local inference, pivoted to OpenRouter + EU provider
     pinning)
   - Wire **Mistral Small Latest** via OpenRouter through
@@ -804,7 +804,7 @@ Without 8b, v0.5 cannot be claimed.
   - V1 follow-up: true local Ollama / MLX inference (Qwen 2.5 7B or
     similar) when a pilot demands offline operation.
 
-- [ ] **8b.5 Non-bank Fact extractors (S7)**
+- [x] **8b.5 Non-bank Fact extractors (S7)** (done 2026-05-10)
   - In `packs/personal_documents`, add three new Fact-emitting
     extractors:
     - `address` (time_varying = true): from documents tagged
@@ -828,7 +828,7 @@ Without 8b, v0.5 cannot be claimed.
     `feat(pack): birthdate Fact extractor`,
     `feat(pack): employer Fact extractor`.
 
-- [ ] **8b.5b Medical predicate scaffold on `raw-medical/` corpus**
+- [x] **8b.5b Medical predicate scaffold on `raw-medical/` corpus** (done 2026-05-10)
   - 25 French clinical cases already added under `raw-medical/` (sample
     from HuggingFace `mlabonne/medical-cases-fr`, see
     `raw-medical/README.md`).
@@ -867,7 +867,7 @@ Without 8b, v0.5 cannot be claimed.
   - Commits: `feat(extraction): abstention path in query answerer`,
     `feat(eval): abstention_accuracy metric + 3 cases`.
 
-- [ ] **8b.7 OCR-stress corpus + E2E phase gate v0.5**
+- [x] **8b.7 OCR-stress corpus + E2E phase gate v0.5** (script + asserter done 2026-05-10; user-triggered live run pending)
   - **OCR corpus** — DONE 2026-05-10: 6 PDFs added under `raw-ocr/`
     (4 hybrid + 2 pure-image rasterized). Source: French National
     Assembly archives (Licence Ouverte 2.0). 1985 + 1992 written
