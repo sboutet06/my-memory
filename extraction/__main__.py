@@ -547,7 +547,7 @@ async def _run_extract_predicates(
     config = ExtractionConfig.from_env()
     config.require_api_key()
 
-    packs = _load_packs(None, no_packs=False)
+    packs = _load_packs(None, disable=False)
     if not packs:
         print("No packs active — nothing to do.", file=sys.stderr)
         return 1
