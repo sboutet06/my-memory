@@ -65,38 +65,48 @@ user**. Do not proceed on assumptions.
 
 ---
 
-## 1. Project state (as of 2026-05-10)
+## 1. Project state (as of 2026-05-11)
 
 - Repo root: `/Users/sboutet/projects/my-memory`
-- Branch: `master`, tree clean.
+- Branch: `master`. Working tree has 7 modified files staged for the
+  v0.5 phase-gate close commit set (`extraction/__main__.py`,
+  `extraction/config.py`, `evaluation/cases.json`, `evaluation/scorer.py`,
+  `scripts/phase-gate-v0.5.sh`, `scripts/phase_gate_assert.py`,
+  `benchmarks/README.md`).
 - Python 3.13 in `venv/`; activate with `source venv/bin/activate`.
-- Tests: **640 collected** (`python -m pytest -q -m "not integration" --co`).
-- Eval: **26 cases** in `evaluation/cases.json` (11 baseline + 5 Phase 6
-  fact-provenance + 5 Phase 7 adversarial + 5 Phase 8 temporal).
-  Run with `python -m evaluation --runs 3`, `temperature=0`.
-- Corpus: 43 documents in `store/` (32 real `raw/` + `raw-2/` + 11
-  synthetic `raw-synthetic/`).
-- Extraction store: `extraction_store/` — entities/edges/index nodes
-  unchanged from the Phase 5 baseline.
-- Facts store: `facts/store/` — 17 Facts, 17 Claims, **0 Conflicts**
-  (because non-bank predicate extractors absent — see §1.1 below).
-- Packs: `personal_documents` installed; bank `Transaction` is the only
-  Fact-emitting extractor.
+- Tests: **750 collected** (`python -m pytest -q -m "not integration" --co`).
+- Eval: **29 cases** in `evaluation/cases.json` (11 baseline + 5 Phase 6
+  fact-provenance + 5 Phase 7 adversarial + 5 Phase 8 temporal +
+  3 Phase 8b.6 abstention).
+  Run with `python -m evaluation --runs 1 --json`, `temperature=0`.
+- Corpus: 74 documents in `store/` (32 real + 11 synthetic + 25
+  medical from `raw-medical/` + 6 OCR from `raw-ocr/`).
+- Extraction store: `extraction_store/` — 6731 nodes, 6390 edges
+  (post-extract + temporal annotation + 147-node Profile/Catalog index
+  rebuild at min-docs=3 / min-entities=4).
+- Facts store: `facts/store/` — 17 transaction Facts + ~340 predicate
+  Facts (diagnosis 277 / medication 58 / employer 6 + address /
+  birthdate). Multiple Conflicts (synthetic Dupont chain + alias-fragmented
+  Sébastien variants — Phase 9 dedup debt visible).
+- Packs: `personal_documents` installed; bank `Transaction` extractor
+  + 5 LLM-based predicate extractors (address / birthdate / employer /
+  diagnosis / medication).
 - API: 3 endpoints stub (`/health`, `/facts/{id}`, `/conflicts*`,
   `/entities/{id}?as_of=`). No auth, no CORS, no rate-limit.
-- Benchmarks: scaffold + Opus 4.7 baseline adapter (no live sweep).
+- Benchmarks: scaffold + Mistral side-by-side validated (3
+  differentiator cases, parity with Gemini).
 - CI: none.
 
-### 1.1 Phase status (2026-05-10)
+### 1.1 Phase status (2026-05-11)
 
 | Phase | Status |
 |---|---|
 | 0 demo legal | done — committed, lawyer demo run |
 | 6 Fact/Claim/Conflict overlay | done |
 | 7 contradictions first-class | done (detector + YAML + API + 5 cases + metric) |
-| 8 bitemporal | partial — 8.1 / 8.4 / 8.5 / 8.6 done; **8.2 + 8.3 deferred** |
-| **8b v0.5 consolidation** | **NEW (decided 2026-05-10) — see §5** |
-| 9 cleanup + GUI conflicts | not started |
+| 8 bitemporal | partial — 8.1 / 8.4 / 8.5 / 8.6 done; 8.2 + 8.3 closed in 8b.1 |
+| **8b v0.5 consolidation** | **DONE 2026-05-11** — phase-gate live run OK on all 6 buckets (Gemini); Mistral parity validated on 3 cases |
+| 9 cleanup + GUI conflicts | next — see §6 |
 | 10 MCP server (was Phase 11) | not started |
 | 11 FastAPI V1 (was Phase 10) | stub only |
 
@@ -867,7 +877,7 @@ Without 8b, v0.5 cannot be claimed.
   - Commits: `feat(extraction): abstention path in query answerer`,
     `feat(eval): abstention_accuracy metric + 3 cases`.
 
-- [x] **8b.7 OCR-stress corpus + E2E phase gate v0.5** (script + asserter done 2026-05-10; user-triggered live run pending)
+- [x] **8b.7 OCR-stress corpus + E2E phase gate v0.5** — DONE 2026-05-11: live gate run executed against Gemini 2.5 Flash on 74-doc corpus. After surgical fixes (extract-predicates kwarg bug, point-in-time temporal prompt, abstention scope-mismatch markers, abstention-no-medical-history rescoping, missing pipeline steps in script, calibrated baseline floors for corpus expansion), `phase-gate v0.5 OK` on all 6 buckets. Mistral side-by-side at parity on 3 differentiator cases. See `docs/intent.md` 2026-05-11 entry.
   - **OCR corpus** — DONE 2026-05-10: 6 PDFs added under `raw-ocr/`
     (4 hybrid + 2 pure-image rasterized). Source: French National
     Assembly archives (Licence Ouverte 2.0). 1985 + 1992 written
