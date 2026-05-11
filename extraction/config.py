@@ -53,19 +53,44 @@ _DEFAULT_TEMPORAL_USER_PROMPT = (
     "If multiple facts of the same kind appear with the same latest "
     "date, or if the chronology is ambiguous, say so explicitly rather "
     "than guess. "
+    # Phase 8b.7-fix: point-in-time reasoning. Without this, the LLM
+    # often returns the LATEST observed value for any time-scoped query
+    # (e.g. picks the 2021 Lyon address for a 'in 2017' question).
+    "For point-in-time questions (« en 2017 », « at as_of=YYYY-MM-DD », "
+    "« à la date du … »), pick the fact whose validity window CONTAINS "
+    "the queried date. Use the [sourced: …] tags AND in-document phrases "
+    "(« à compter du DATE », « depuis YEAR », « valable du X au Y », "
+    "« pendant la période X→Y », « jusqu'au DATE ») to determine each "
+    "fact's validity window. NEVER return a fact whose start date is "
+    "strictly after the queried date. If the queried date precedes all "
+    "available evidence, abstain instead of returning the earliest. "
     # Phase 8b.6 abstention authorization (charter §3.8c, premortem F6).
-    # Without this clause, the answerer fluently confabulates when the "
-    # corpus does not support a confident answer — directly contradicting "
-    # the §1.2 accountability promise. "
+    # Without this clause, the answerer fluently confabulates when the
+    # corpus does not support a confident answer — directly contradicting
+    # the §1.2 accountability promise.
+    "Answer ONLY the exact question asked. Do not substitute a related "
+    "entity, document, or predicate when the question's specific subject "
+    "is missing. Examples of forbidden substitutions: (a) the question "
+    "asks about person X's medical history but only X's family members "
+    "have records — do NOT report family records as X's; (b) the question "
+    "scopes a fact to document D (« décrits dans le compromis de vente ») "
+    "but D does not contain that fact — do NOT pull the fact from a "
+    "different document; (c) the question asks about predicate P (a car "
+    "model) inside a real-estate document — do NOT volunteer car data "
+    "from elsewhere. In all such cases, abstain. "
     "If the provided context does not contain sufficient evidence to "
-    "answer the question, respond explicitly with a sentence such as "
-    "« Le corpus ne contient pas suffisamment d'informations pour "
-    "répondre à cette question » (or its English equivalent "
+    "answer the EXACT question (correct subject AND correct document "
+    "scope AND correct predicate), respond explicitly with a sentence "
+    "such as « Le corpus ne contient pas suffisamment d'informations "
+    "pour répondre à cette question » (or its English equivalent "
     "« insufficient evidence »). Do NOT invent facts, do NOT speculate, "
     "do NOT extrapolate beyond what the context contains. Saying "
     "« I do not have sufficient evidence » is a correct, expected, and "
     "trust-preserving answer when the corpus does not support a "
-    "confident response."
+    "confident response. "
+    "However, when the context DOES contain evidence matching the "
+    "question's subject, scope, and predicate, you MUST extract and "
+    "report it — do not abstain on a question whose answer is present."
 )
 
 
