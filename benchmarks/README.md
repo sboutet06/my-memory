@@ -57,12 +57,16 @@ OpenRouter routes a single model id to multiple upstreams; for the
 RGPD-aligned FR legal/medical pilot we pin the upstream via
 `provider.order=[…]` in the request body. Set
 `EXTRACTION_PROVIDER_ORDER=mistral` (with
-`EXTRACTION_LLM_MODEL=mistralai/mistral-small-latest`) to enable.
+`EXTRACTION_LLM_MODEL=mistralai/mistral-small-2603`) to enable.
+
+OpenRouter does NOT expose `*-latest` aliases for Mistral; pin a dated
+build (e.g. `mistral-small-2603`, `mistral-medium-3.1`) — `*-latest`
+returns HTTP 400 `not a valid model ID`.
 
 | Model | OpenRouter ID | Provider pin | Hosting | Notes |
 |-------|---------------|--------------|---------|-------|
-| Mistral Small Latest | `mistralai/mistral-small-latest` | `mistral` | Paris (Mistral SA) | v0.5 sovereign default |
-| Mistral Medium | `mistralai/mistral-medium-latest` | `mistral` | Paris | 3× cost, higher quality for V1 |
+| Mistral Small 2603 | `mistralai/mistral-small-2603` | `mistral` | Paris (Mistral SA) | v0.5 sovereign default |
+| Mistral Medium 3.1 | `mistralai/mistral-medium-3.1` | `mistral` | Paris | 3× cost, higher quality for V1 |
 
 Smoke test for the v0.5 sovereign swap (3 cases, ~$0.05):
 
@@ -77,14 +81,20 @@ results = asyncio.run(run(
     stage="query_answerer",
     model_list=[
         "google/gemini-2.5-flash",
-        "mistralai/mistral-small-latest",
+        "mistralai/mistral-small-2603",
     ],
     cases=cases,
     store_root=Path("store"),
-    working_dir=Path(".lightrag"),
+    working_dir=Path("extraction_store"),
     case_limit=3,
 ))
 ```
+
+Validated 2026-05-11 against 3 differentiator cases
+(`adversarial-birthdate-conflict`, `temporal-address-2022`,
+`abstention-out-of-temporal-range`): both Gemini and Mistral score 3/3
+pass — sovereign routing has parity with the default Gemini path on the
+v0.5 differentiator surface.
 
 Pass criterion: `fact_coverage` ≥ Gemini Flash − 0.05 on the 3 cases.
 
