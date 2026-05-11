@@ -162,17 +162,23 @@ def score_abstention_accuracy(expects_abstention: bool, answer: str) -> float:
     # Permissive marker set: any single phrase here = abstention.
     # FR + EN; folded comparison strips accents and lowercases.
     markers = (
-        # French
+        # French — direct insufficiency markers
         "insuffisant", "insuffisamment", "pas suffisamment",
         "ne dispose pas", "ne contient pas", "ne contient aucun",
         "n'apparait pas", "n apparait pas",
         "absent du corpus", "aucune information",
         "non disponible", "impossible de determiner",
+        # French — scope-mismatch / off-topic abstention markers
+        # ("the doc/corpus does NOT describe / mention / cover X").
+        "ne decrit pas", "ne mentionne pas", "ne traite pas",
+        "ne concerne pas", "ne porte pas sur", "ne fait pas mention",
+        "n'evoque pas", "n evoque pas",
         # English
         "insufficient", "no information", "cannot determine",
         "not enough", "do not have sufficient",
         "does not contain sufficient", "does not contain enough",
         "lacks sufficient",
+        "does not describe", "does not mention", "does not cover",
     )
     for marker in markers:
         if _fold(marker) in folded:

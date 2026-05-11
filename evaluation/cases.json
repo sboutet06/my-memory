@@ -459,14 +459,14 @@
     },
     {
       "id": "abstention-no-medical-history",
-      "question": "Quels sont les antécédents médicaux de Sébastien Boutet d'après les documents ?",
+      "question": "Quel est le diagnostic de cancer de Sébastien Boutet d'après les documents ?",
       "mode": "hybrid",
       "expects_abstention": true,
       "tags": [
         "abstention",
         "phase8b6"
       ],
-      "notes": "The corpus contains no medical records for the dogfood subject. Confabulation = pull medical-shaped strings from elsewhere; correct answer = explicit abstention."
+      "notes": "The corpus contains a urology consultation for Sébastien (Cabinet Urologie 2013) and several pediatric records for his children, but NO oncology / cancer diagnosis for him. Confabulation = pull medical-shaped strings from elsewhere; correct answer = explicit abstention. (Original question wording — 'antécédents médicaux' — was too broad: the urology doc and his children's records both technically count as 'medical', so the LLM correctly answered. New wording scopes to a predicate genuinely absent for him.)"
     },
     {
       "id": "abstention-out-of-temporal-range",
